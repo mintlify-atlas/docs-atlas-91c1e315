@@ -220,7 +220,7 @@ The terminal protocol is designed for autonomous operation. The agent will conti
 ## Option 3: MCP Server
 
 <Note>
-The **MCP Server** option allows external IDEs (Kiro, Cursor, Claude Desktop, Antigravity) to use TaskSync's `get_feedback` tool via the Model Context Protocol.
+The **MCP Server** option allows external IDEs (Kiro, Cursor, Claude Desktop, Antigravity) to use TaskSync's `ask_user` tool via the Model Context Protocol. There's also a standalone MCP server ([tasksync-mcp](https://github.com/4regab/tasksync-mcp)) that provides a `get_feedback` tool for file-based workflows.
 </Note>
 
 ### Installation: Embedded MCP Server (VS Code)
@@ -337,11 +337,11 @@ TaskSync: Show MCP Configuration
 The embedded MCP server implementation:
 
 ```typescript tasksync-chat/src/mcp/mcpServer.ts
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 // MCP server runs on port 3579 by default
-// Provides get_feedback tool that delegates to ask_user
+// Provides ask_user tool for external IDEs
 ```
 
 Auto-start logic:
