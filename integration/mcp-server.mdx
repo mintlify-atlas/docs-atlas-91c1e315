@@ -1,0 +1,530 @@
+---
+title: MCP Server
+description: Configure TaskSync's Model Context Protocol server for external IDE integration
+---
+
+TaskSync includes a built-in MCP (Model Context Protocol) server that exposes the `ask_user` tool to external AI IDEs like Kiro, Cursor, Claude Desktop, and Antigravity. This allows you to use TaskSync's feedback loop from any MCP-compatible client.
+
+## Overview
+
+The MCP server runs as an HTTP server with SSE (Server-Sent Events) transport, providing real-time communication between AI clients and the TaskSync VS Code extension.
+
+<CardGroup cols={2}>
+  <Card title="Auto-Registration" icon="wand-magic-sparkles">
+    Automatically registers with Kiro, Cursor, and Antigravity on startup
+  </Card>
+  <Card title="SSE Transport" icon="bolt">
+    Real-time bidirectional communication via Server-Sent Events
+  </Card>
+  <Card title="Fixed Port" icon="hashtag">
+    Default port 3579 with dynamic fallback support
+  </Card>
+  <Card title="ask_user Tool" icon="message-question">
+    Exposes the same ask_user tool used in VS Code
+  </Card>
+</CardGroup>
+
+## Configuration
+
+### VS Code Settings
+
+Configure the MCP server via VS Code settings:
+
+```json
+{
+  "tasksync.mcpEnabled": false,
+  "tasksync.mcpAutoStartIfClients": true,
+  "tasksync.mcpPort": 3579,
+  "tasksync.autoRegisterMcp": true
+}
+```
+
+<ParamField path="mcpEnabled" type="boolean" default={false}>
+  Always start MCP server on activation. Enable this if you use TaskSync with external IDEs.
+</ParamField>
+
+<ParamField path="mcpAutoStartIfClients" type="boolean" default={true}>
+  Automatically start MCP server if external client configurations are detected (Kiro, Cursor, Antigravity).
+</ParamField>
+
+<ParamField path="mcpPort" type="number" default={3579}>
+  Fixed port for the MCP server. Set to `0` for dynamic port assignment.
+</ParamField>
+
+<ParamField path="autoRegisterMcp" type="boolean" default={true}>
+  Automatically register MCP server with Kiro, Cursor, and Antigravity clients.
+</ParamField>
+
+## Auto-Registration
+
+TaskSync automatically registers the MCP server with supported clients by updating their configuration files:
+
+<Tabs>
+  <Tab title="Kiro (AWS AI IDE)">
+    **Config path**: `~/.kiro/settings/mcp.json`
+
+    ```json
+    {
+      "mcpServers": {
+        "tasksync-chat": {
+          "url": "http://localhost:3579/sse"
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Cursor">
+    **Config path**: `~/.cursor/mcp.json`
+
+    ```json
+    {
+      "mcpServers": {
+        "tasksync-chat": {
+          "url": "http://localhost:3579/sse"
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Antigravity (Gemini CLI)">
+    **Config path**: `~/.gemini/antigravity/mcp_config.json`
+
+    ```json
+    {
+      "mcpServers": {
+        "tasksync-chat": {
+          "serverUrl": "http://localhost:3579/sse"
+        }
+      }
+    }
+    ```
+    
+    <Note>
+      Antigravity uses `serverUrl` instead of `url` in the configuration.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Manual Configuration
+
+For IDEs not supported by auto-registration (e.g., Claude Desktop):
+
+<Steps>
+  <Step title="Get MCP configuration">
+    Run the VS Code command:
+    ```
+    TaskSync: Show MCP Configuration
+    ```
+    
+    This displays the server URL and config paths.
+  </Step>
+
+  <Step title="Add to client config">
+    For **Claude Desktop**, edit the config file:
+    
+    <Tabs>
+      <Tab title="macOS">
+        `~/Library/Application Support/Claude/claude_desktop_config.json`
+      </Tab>
+      <Tab title="Windows">
+        `%APPDATA%\Claude\claude_desktop_config.json`
+      </Tab>
+    </Tabs>
+
+    Add the TaskSync server:
+    ```json
+    {
+      "mcpServers": {
+        "tasksync-chat": {
+          "url": "http://localhost:3579/sse"
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Restart the client">
+    Restart your AI IDE to load the new MCP server configuration.
+  </Step>
+</Steps>
+
+## MCP Server Implementation
+
+The MCP server is implemented in `tasksync-chat/src/mcp/mcpServer.ts`:
+
+### Server Initialization
+
+```typescript
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+
+this.mcpServer = new McpServer({
+  name: "TaskSync Sidebar Chat",
+  version: "2.0.0"
+});
+
+this.transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => `sess_${crypto.randomUUID()}`
+});
+
+await this.mcpServer.connect(this.transport);
+```
+
+### ask_user Tool Registration
+
+The server registers the `ask_user` tool with input schema validation:
+
+```typescript
+import { z } from 'zod';
+
+const MAX_QUESTION_LENGTH = 500000;
+
+mcpServer.registerTool(
+  "ask_user",
+  {
+    description: "YOU MUST ALWAYS Use the askUser tool to ask question/s to user when explicit user approval, feedback, or clarification is required...",
+    inputSchema: z.object({
+      question: z.string()
+        .min(1, "Question cannot be empty")
+        .max(MAX_QUESTION_LENGTH, `Question cannot exceed ${MAX_QUESTION_LENGTH} characters`)
+        .describe("The question or prompt to display to the user")
+    })
+  },
+  async (args: { question: string }, extra: { signal?: AbortSignal }) => {
+    // Call the shared askUser implementation
+    const result = await askUser(
+      { question: args.question },
+      provider,
+      tokenSource.token
+    );
+    
+    // Return content with image attachments if present
+    const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+      { type: 'text', text: JSON.stringify(result) }
+    ];
+    
+    if (result.attachments?.length) {
+      const imageParts = await Promise.all(result.attachments.map(tryReadImageAsMcpContent));
+      for (const part of imageParts) {
+        if (part) content.push(part);
+      }
+    }
+    
+    return { content };
+  }
+);
+```
+
+### HTTP Server Setup
+
+```typescript
+import * as http from 'http';
+
+this.server = http.createServer(async (req, res) => {
+  const url = req.url || '/';
+  
+  if (url === '/sse' || url.startsWith('/sse/') || url.startsWith('/sse?')) {
+    // Handle SSE connections
+    await this.transport?.handleRequest(req, res);
+    return;
+  }
+  
+  if (url.startsWith('/message') || url.startsWith('/messages')) {
+    // Handle message endpoints
+    await this.transport?.handleRequest(req, res);
+    return;
+  }
+  
+  res.writeHead(404);
+  res.end();
+});
+
+await new Promise<void>((resolve) => {
+  this.server?.listen(this.port, '127.0.0.1', () => resolve());
+});
+```
+
+## VS Code Commands
+
+<Tabs>
+  <Tab title="Start MCP Server">
+    ```
+    TaskSync: Start MCP Server
+    ```
+    Manually start the MCP server if not already running.
+  </Tab>
+
+  <Tab title="Restart MCP Server">
+    ```
+    TaskSync: Restart MCP Server
+    ```
+    Stop and restart the MCP server. Useful after configuration changes.
+  </Tab>
+
+  <Tab title="Show MCP Configuration">
+    ```
+    TaskSync: Show MCP Configuration
+    ```
+    Display the current MCP server configuration including URL and config file paths for manual setup.
+  </Tab>
+</Tabs>
+
+## Port Management
+
+The MCP server uses a smart port allocation strategy:
+
+<Steps>
+  <Step title="Try configured port">
+    Attempts to bind to the configured port (default 3579).
+  </Step>
+
+  <Step title="Fallback to dynamic port">
+    If the configured port is unavailable, automatically selects a random available port.
+  </Step>
+
+  <Step title="Update client configs">
+    Auto-registration updates client configuration files with the actual port being used.
+  </Step>
+</Steps>
+
+```typescript
+private async tryPort(port: number): Promise<number> {
+  return new Promise((resolve) => {
+    const testServer = http.createServer();
+    testServer.once('error', () => {
+      // Port unavailable, find dynamic port
+      this.findAvailablePort().then(resolve);
+    });
+    testServer.listen(port, '127.0.0.1', () => {
+      testServer.close(() => resolve(port));
+    });
+  });
+}
+```
+
+## Image Attachments
+
+The MCP server supports image attachments up to 4MB:
+
+```typescript
+async function tryReadImageAsMcpContent(uri: string): Promise<null | { type: 'image'; data: string; mimeType: string }> {
+  const fileUri = vscode.Uri.parse(uri);
+  if (fileUri.scheme !== 'file') return null;
+  
+  const filePath = fileUri.fsPath;
+  const mimeType = getImageMimeType(filePath);
+  if (!mimeType.startsWith('image/')) return null;
+  
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB
+  const stat = await fs.promises.stat(filePath);
+  if (stat.size > MAX_IMAGE_BYTES) {
+    console.warn(`Skipping image >4MB: ${filePath}`);
+    return null;
+  }
+  
+  const buffer = await fs.promises.readFile(filePath);
+  return {
+    type: 'image',
+    data: buffer.toString('base64'),
+    mimeType,
+  };
+}
+```
+
+## Tool Response Format
+
+The `ask_user` tool returns a JSON response with optional image attachments:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"response\":\"Continue with the implementation\",\"attachments\":[\"/path/to/file.txt\"]}"
+    },
+    {
+      "type": "image",
+      "data": "base64EncodedImageData...",
+      "mimeType": "image/png"
+    }
+  ]
+}
+```
+
+<Note>
+  Images are automatically converted to base64 and included in the MCP tool response. The AI client receives both text and image content.
+</Note>
+
+## Lifecycle Management
+
+### Server Start
+
+```typescript
+async start(reusePort: boolean = false) {
+  // Get configured port or find available
+  const config = vscode.workspace.getConfiguration('tasksync');
+  const configuredPort = config.get<number>('mcpPort', 3579);
+  
+  if (configuredPort > 0) {
+    this.port = await this.tryPort(configuredPort);
+  } else {
+    this.port = await this.findAvailablePort();
+  }
+  
+  // Create MCP server and transport
+  // Listen on 127.0.0.1
+  // Auto-register with clients
+}
+```
+
+### Server Restart
+
+```typescript
+async restart() {
+  await Promise.race([
+    this.dispose(),
+    new Promise(resolve => setTimeout(resolve, 2000))
+  ]);
+  
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await this.start(true); // Reuse port
+}
+```
+
+### Server Dispose
+
+```typescript
+async dispose() {
+  this._isRunning = false;
+  
+  if (this.server) {
+    this.server.close();
+    this.server = undefined;
+  }
+  
+  if (this.mcpServer) {
+    await this.mcpServer.close();
+    this.mcpServer = undefined;
+  }
+  
+  // Unregister from all clients
+  await this.unregisterFromClients();
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="MCP server won't start">
+    **Check port availability:**
+    ```bash
+    # Linux/Mac
+    lsof -i :3579
+    
+    # Windows
+    netstat -ano | findstr :3579
+    ```
+    
+    **Solutions:**
+    1. Kill the process using port 3579
+    2. Set `"tasksync.mcpPort": 0` for dynamic port
+    3. Use `TaskSync: Restart MCP Server` command
+  </Accordion>
+
+  <Accordion title="Client can't connect to server">
+    **Verify server is running:**
+    1. Check VS Code output panel for TaskSync logs
+    2. Run `TaskSync: Show MCP Configuration` to verify URL
+    3. Test connection:
+       ```bash
+       curl http://localhost:3579/sse
+       ```
+    
+    **Check client configuration:**
+    1. Verify config file path is correct
+    2. Ensure JSON syntax is valid
+    3. Restart the client application
+  </Accordion>
+
+  <Accordion title="ask_user tool not available in client">
+    **Troubleshooting steps:**
+    1. Verify MCP server is running (check VS Code status bar)
+    2. Check client MCP configuration is correct
+    3. Restart both VS Code and the client
+    4. Enable `"tasksync.mcpEnabled": true` to force server start
+    5. Check client logs for connection errors
+  </Accordion>
+
+  <Accordion title="Auto-registration not working">
+    **Manual registration:**
+    1. Run `TaskSync: Show MCP Configuration`
+    2. Manually edit the client config file
+    3. Add the TaskSync server entry
+    4. Ensure `"tasksync.autoRegisterMcp": true`
+    5. Use `TaskSync: Restart MCP Server` after manual changes
+  </Accordion>
+</AccordionGroup>
+
+## Security Considerations
+
+<Warning>
+  The MCP server binds to `127.0.0.1` (localhost) only. It is **not accessible** from external networks. This is intentional for security.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Localhost Only" icon="lock">
+    Server listens on 127.0.0.1, preventing external access
+  </Card>
+  <Card title="No Authentication" icon="shield-exclamation">
+    No auth required since it's localhost-only
+  </Card>
+  <Card title="Input Validation" icon="check">
+    Zod schema validates all tool inputs
+  </Card>
+  <Card title="Size Limits" icon="gauge">
+    500KB max question length, 4MB max image size
+  </Card>
+</CardGroup>
+
+## Performance Optimization
+
+- **Session caching**: MCP sessions are cached with UUID-based session IDs
+- **Async I/O**: All file operations are asynchronous
+- **Image size limits**: 4MB maximum to prevent memory exhaustion
+- **Graceful shutdown**: Proper cleanup of HTTP server and MCP connections
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Fixed Port" icon="hashtag">
+    Keep default port 3579 for consistent client configuration
+  </Card>
+  <Card title="Enable Auto-Start" icon="play">
+    Set `mcpAutoStartIfClients: true` if using external IDEs
+  </Card>
+  <Card title="Monitor Logs" icon="file-lines">
+    Check VS Code output panel for MCP server status and errors
+  </Card>
+  <Card title="Restart on Config Changes" icon="rotate">
+    Use `TaskSync: Restart MCP Server` after changing settings
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="VS Code Extension" href="/integration/vscode-extension" icon="window">
+    Learn about the full VS Code extension features
+  </Card>
+  <Card title="API Reference" href="/api/ask-user" icon="code">
+    Explore the ask_user tool API specification
+  </Card>
+  <Card title="MCP Protocol" href="https://modelcontextprotocol.io" icon="book">
+    Read the official Model Context Protocol documentation
+  </Card>
+  <Card title="Source Code" href="https://github.com/4regab/TaskSync/blob/main/tasksync-chat/src/mcp/mcpServer.ts" icon="github">
+    View the MCP server implementation
+  </Card>
+</CardGroup>

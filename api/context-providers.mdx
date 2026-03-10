@@ -1,0 +1,703 @@
+---
+title: 'Context Providers'
+description: 'Terminal and workspace diagnostics context for AI prompts'
+icon: 'layer-group'
+---
+
+## Overview
+
+TaskSync provides two context providers that capture workspace information for inclusion in AI prompts:
+
+1. **Terminal Context Provider** - Captures recent command executions and output
+2. **Problems Context Provider** - Retrieves workspace diagnostics (errors, warnings)
+
+## Architecture
+
+```typescript index.ts
+export type ContextReferenceType = 'terminal' | 'problems';
+
+export interface ContextReference {
+  id: string;
+  type: ContextReferenceType;
+  label: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+export class ContextManager {
+  private _terminalProvider: TerminalContextProvider;
+  private _problemsProvider: ProblemsContextProvider;
+
+  public get terminal(): TerminalContextProvider;
+  public get problems(): ProblemsContextProvider;
+
+  public async getContextSuggestions(query: string);
+  public async getContextContent(type: ContextReferenceType, options?);
+  public dispose(): void;
+}
+```
+
+## Terminal Context Provider
+
+### Overview
+
+Captures terminal command executions using VS Code's Shell Integration API. Stores the last 20 commands with full output.
+
+### Command Data Structure
+
+```typescript terminalContext.ts
+export interface TerminalCommand {
+  id: string;              // Unique ID: term_{timestamp}_{random}
+  command: string;         // Command line executed
+  output: string;          // Sanitized output (ANSI codes removed)
+  exitCode: number | undefined; // Process exit code
+  timestamp: number;       // Execution time (ms since epoch)
+  cwd: string;            // Working directory
+  terminalName: string;   // Terminal name (e.g., "zsh", "bash")
+}
+```
+
+<ParamField path="id" type="string">
+  Unique identifier generated when command completes.
+  
+  **Format:** `term_{timestamp}_{random}`
+  
+  **Example:** `term_1710345678901_a7x9k2`
+</ParamField>
+
+<ParamField path="command" type="string">
+  The command line that was executed.
+  
+  **Source:** `TerminalShellExecution.commandLine.value`
+  
+  **Fallback:** `"Unknown command"` if not available
+</ParamField>
+
+<ParamField path="output" type="string">
+  Sanitized terminal output with ANSI escape codes removed.
+  
+  **Processing:**
+  - ANSI color codes removed
+  - Control characters stripped
+  - Line endings normalized to `\n`
+  - Excessive blank lines collapsed
+  - Truncated at 50KB to prevent memory issues
+</ParamField>
+
+<ParamField path="exitCode" type="number | undefined">
+  Process exit code.
+  
+  **Values:**
+  - `0` - Success
+  - Non-zero - Error
+  - `undefined` - Still running or unavailable
+</ParamField>
+
+<ParamField path="cwd" type="string">
+  Working directory where command was executed.
+  
+  **Source:** `TerminalShellExecution.cwd.fsPath`
+</ParamField>
+
+<ParamField path="terminalName" type="string">
+  Name of the terminal (e.g., "zsh", "bash", "pwsh").
+  
+  **Source:** `Terminal.name`
+</ParamField>
+
+### API Methods
+
+<Accordion title="getRecentCommands()">
+
+```typescript
+public getRecentCommands(): TerminalCommand[]
+```
+
+Returns all recent commands (newest first), up to 20 commands.
+
+**Example:**
+```typescript
+const commands = contextManager.terminal.getRecentCommands();
+for (const cmd of commands) {
+  console.log(`${cmd.command} -> exit ${cmd.exitCode}`);
+}
+```
+
+</Accordion>
+
+<Accordion title="getCommandById(id)">
+
+```typescript
+public getCommandById(id: string): TerminalCommand | undefined
+```
+
+Retrieve a specific command by its unique ID.
+
+**Example:**
+```typescript
+const cmd = contextManager.terminal.getCommandById('term_1710345678901_a7x9k2');
+if (cmd) {
+  console.log(cmd.output);
+}
+```
+
+</Accordion>
+
+<Accordion title="getLatestCommand()">
+
+```typescript
+public getLatestCommand(): TerminalCommand | undefined
+```
+
+Returns the most recently executed command.
+
+**Example:**
+```typescript
+const latest = contextManager.terminal.getLatestCommand();
+if (latest && latest.exitCode !== 0) {
+  console.error('Last command failed:', latest.output);
+}
+```
+
+</Accordion>
+
+<Accordion title="formatCommandForPrompt(command)">
+
+```typescript
+public formatCommandForPrompt(command: TerminalCommand): string
+```
+
+Formats a command for inclusion in an AI prompt.
+
+**Output format:**
+```
+=== Terminal Command ===
+Command: npm test
+Directory: /workspace/project
+Terminal: zsh
+Exit code: 1
+
+Output:
+```
+ERROR: 5 tests failed
+Test suite failed to run
+```
+```
+
+**Implementation:**
+```typescript terminalContext.ts
+public formatCommandForPrompt(command: TerminalCommand): string {
+  const exitInfo = command.exitCode !== undefined
+    ? `Exit code: ${command.exitCode}`
+    : 'Running';
+
+  const lines = [
+    `=== Terminal Command ===`,
+    `Command: ${command.command}`,
+    `Directory: ${command.cwd || 'Unknown'}`,
+    `Terminal: ${command.terminalName}`,
+    `${exitInfo}`,
+    ``,
+    `Output:`,
+    '```',
+    command.output || '(no output)',
+    '```'
+  ];
+
+  return lines.join('\n');
+}
+```
+
+</Accordion>
+
+<Accordion title="formatCommandListForAutocomplete()">
+
+```typescript
+public formatCommandListForAutocomplete(): Array<{
+  label: string;
+  description: string;
+  id: string;
+  detail: string;
+}>
+```
+
+Formats commands for autocomplete UI display.
+
+**Output example:**
+```typescript
+[
+  {
+    label: "✓ npm install",
+    description: "2m ago",
+    id: "term_1710345678901_a7x9k2",
+    detail: "added 142 packages in 8s"
+  },
+  {
+    label: "✗ npm test",
+    description: "5m ago",
+    id: "term_1710345612345_b3y7m1",
+    detail: "ERROR: 5 tests failed..."
+  }
+]
+```
+
+**Status icons:**
+- `✓` - Exit code 0 (success)
+- `✗` - Non-zero exit code (error)
+- `⋯` - Still running or unknown
+
+</Accordion>
+
+### Implementation Details
+
+<Expandable title="Output Sanitization">
+
+Terminal output is sanitized to remove control characters:
+
+```typescript terminalContext.ts
+private _sanitizeOutput(output: string): string {
+  // Remove ANSI escape codes (colors, cursor movements, etc.)
+  const ansiRegex = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+  let sanitized = output.replace(ansiRegex, '');
+
+  // Remove other common control characters
+  sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+  // Normalize line endings
+  sanitized = sanitized.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // Remove excessive blank lines
+  sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
+
+  return sanitized.trim();
+}
+```
+
+</Expandable>
+
+<Expandable title="Stream Reading">
+
+Output is captured using async iteration over the execution stream:
+
+```typescript terminalContext.ts
+private async _readExecutionOutput(
+  execution: vscode.TerminalShellExecution,
+  tracker: { output: string[] }
+): Promise<void> {
+  try {
+    const stream = execution.read();
+    for await (const data of stream) {
+      tracker.output.push(data);
+
+      // Limit output size to prevent memory issues (max 50KB per command)
+      const totalLength = tracker.output.reduce((sum, s) => sum + s.length, 0);
+      if (totalLength > 50000) {
+        tracker.output.push('\n... (output truncated)');
+        break;
+      }
+    }
+  } catch (error) {
+    // Stream may be closed early - not an error
+    console.error('[TaskSync] Error reading terminal output:', error);
+  }
+}
+```
+
+</Expandable>
+
+<Expandable title="Memory Leak Prevention">
+
+The provider implements multiple safeguards:
+
+1. **Stale execution cleanup** - Removes trackers after 60 seconds
+2. **Terminal close listener** - Cleans up on terminal disposal
+3. **Max command limit** - Keeps only 20 most recent commands
+4. **Output size limit** - Truncates at 50KB per command
+
+```typescript terminalContext.ts
+private readonly _STALE_EXECUTION_TIMEOUT_MS = 60000;
+private _maxCommands: number = 20;
+
+private _startCleanupInterval(): void {
+  this._cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    const staleEntries: vscode.TerminalShellExecution[] = [];
+
+    for (const [execution, tracker] of this._activeExecutions) {
+      if (now - tracker.timestamp > this._STALE_EXECUTION_TIMEOUT_MS) {
+        staleEntries.push(execution);
+      }
+    }
+
+    for (const execution of staleEntries) {
+      console.warn('[TaskSync] Cleaning up stale terminal execution tracker');
+      this._activeExecutions.delete(execution);
+    }
+  }, 30000);
+}
+```
+
+</Expandable>
+
+## Problems Context Provider
+
+### Overview
+
+Retrieves workspace diagnostics from VS Code's Problems panel. Provides structured access to errors, warnings, and hints.
+
+### Problem Data Structure
+
+```typescript problemsContext.ts
+export interface ProblemInfo {
+  id: string;              // Unique ID: prob_{timestamp}_{random}
+  file: string;            // Absolute file path
+  relativePath: string;    // Workspace-relative path
+  line: number;            // 1-based line number
+  column: number;          // 1-based column number
+  message: string;         // Diagnostic message
+  severity: 'error' | 'warning' | 'info' | 'hint';
+  source?: string;         // Diagnostic source (e.g., "ts", "eslint")
+  code?: string | number;  // Error code (e.g., 2304, "no-unused-vars")
+}
+
+export interface ProblemsSummary {
+  errorCount: number;
+  warningCount: number;
+  infoCount: number;
+  hintCount: number;
+  totalCount: number;
+  fileCount: number;       // Number of files with problems
+}
+```
+
+### API Methods
+
+<Accordion title="getProblems(options?)">
+
+```typescript
+public getProblems(options?: {
+  severity?: ('error' | 'warning' | 'info' | 'hint')[];
+  maxProblems?: number;
+  filePattern?: string;
+}): ProblemInfo[]
+```
+
+Retrieves workspace problems with optional filtering.
+
+<ParamField path="options.severity" type="array">
+  Filter by severity levels.
+  
+  **Default:** `['error', 'warning', 'info', 'hint']` (all)
+  
+  **Example:** `['error', 'warning']` (exclude info/hints)
+</ParamField>
+
+<ParamField path="options.maxProblems" type="number">
+  Maximum number of problems to return.
+  
+  **Default:** `100`
+  
+  **Use case:** Prevent overwhelming AI with too many diagnostics
+</ParamField>
+
+<ParamField path="options.filePattern" type="string">
+  Filter by file path pattern (substring match).
+  
+  **Example:** `"src/"` (only files in src directory)
+</ParamField>
+
+**Example:**
+```typescript
+// Get only errors from src directory
+const errors = contextManager.problems.getProblems({
+  severity: ['error'],
+  filePattern: 'src/',
+  maxProblems: 50
+});
+```
+
+**Sorting:** Results are sorted by severity (errors first), then by file path.
+
+</Accordion>
+
+<Accordion title="getSummary()">
+
+```typescript
+public getSummary(): ProblemsSummary
+```
+
+Returns aggregated statistics about workspace problems.
+
+**Example:**
+```typescript
+const summary = contextManager.problems.getSummary();
+console.log(`${summary.errorCount} errors in ${summary.fileCount} files`);
+
+if (summary.errorCount > 0) {
+  // Show detailed problems
+}
+```
+
+**Output example:**
+```typescript
+{
+  errorCount: 5,
+  warningCount: 12,
+  infoCount: 3,
+  hintCount: 1,
+  totalCount: 21,
+  fileCount: 8
+}
+```
+
+</Accordion>
+
+<Accordion title="formatProblemsForPrompt(problems?)">
+
+```typescript
+public formatProblemsForPrompt(problems?: ProblemInfo[]): string
+```
+
+Formats problems for inclusion in an AI prompt. If no problems provided, retrieves all current workspace problems.
+
+**Output format:**
+```
+=== Workspace Problems ===
+Summary: 3 errors, 2 warnings, 0 info in 2 files
+
+📁 src/index.ts
+  ❌ Line 42: Cannot find name 'undefinedVar' [ts](2304)
+  ❌ Line 58: Type 'string' is not assignable to type 'number' [ts](2322)
+  ⚠️ Line 15: 'tempVar' is declared but never used [ts](6133)
+
+📁 src/utils.ts
+  ❌ Line 12: Expected 2 arguments, but got 1 [ts](2554)
+  ⚠️ Line 34: Unnecessary semicolon [eslint](no-extra-semi)
+```
+
+**Implementation:**
+```typescript problemsContext.ts
+public formatProblemsForPrompt(problems?: ProblemInfo[]): string {
+  const problemList = problems || this.getProblems();
+
+  if (problemList.length === 0) {
+    return '=== Workspace Problems ===\nNo problems found in the workspace.';
+  }
+
+  const summary = this.getSummary();
+  const lines: string[] = [
+    '=== Workspace Problems ===',
+    `Summary: ${summary.errorCount} errors, ${summary.warningCount} warnings, ${summary.infoCount} info in ${summary.fileCount} files`,
+    ''
+  ];
+
+  // Group by file
+  const byFile = new Map<string, ProblemInfo[]>();
+  for (const problem of problemList) {
+    const existing = byFile.get(problem.relativePath) || [];
+    existing.push(problem);
+    byFile.set(problem.relativePath, existing);
+  }
+
+  for (const [filePath, fileProblems] of byFile) {
+    lines.push(`📁 ${filePath}`);
+    for (const problem of fileProblems) {
+      const icon = this._getSeverityIcon(problem.severity);
+      const source = problem.source ? `[${problem.source}]` : '';
+      const code = problem.code ? `(${problem.code})` : '';
+      lines.push(`  ${icon} Line ${problem.line}: ${problem.message} ${source}${code}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n').trim();
+}
+```
+
+**Severity icons:**
+- `❌` - Error
+- `⚠️` - Warning
+- `ℹ️` - Info
+- `💡` - Hint
+
+</Accordion>
+
+<Accordion title="formatForAutocomplete()">
+
+```typescript
+public formatForAutocomplete(): {
+  label: string;
+  description: string;
+  detail: string;
+}
+```
+
+Formats problems summary for autocomplete UI.
+
+**Example output:**
+```typescript
+{
+  label: "#problems",
+  description: "5 errors, 12 warnings",
+  detail: "Include 21 problems from 8 files"
+}
+```
+
+If no problems exist:
+```typescript
+{
+  label: "#problems",
+  description: "No problems",
+  detail: "Workspace has no errors or warnings"
+}
+```
+
+</Accordion>
+
+## Context Manager
+
+### Unified API
+
+The `ContextManager` class provides a unified interface to all context providers:
+
+```typescript index.ts
+export class ContextManager {
+  private _terminalProvider: TerminalContextProvider;
+  private _problemsProvider: ProblemsContextProvider;
+
+  constructor() {
+    this._terminalProvider = new TerminalContextProvider();
+    this._problemsProvider = new ProblemsContextProvider();
+  }
+
+  public get terminal(): TerminalContextProvider {
+    return this._terminalProvider;
+  }
+
+  public get problems(): ProblemsContextProvider {
+    return this._problemsProvider;
+  }
+}
+```
+
+### Context Suggestions
+
+```typescript
+public async getContextSuggestions(query: string): Promise<Array<{
+  type: ContextReferenceType;
+  label: string;
+  description: string;
+  detail: string;
+}>>
+```
+
+Provides autocomplete suggestions for `#` references.
+
+**Example:**
+```typescript
+const suggestions = await contextManager.getContextSuggestions('term');
+// Returns:
+// [
+//   {
+//     type: 'terminal',
+//     label: '#terminal',
+//     description: '5 recent commands',
+//     detail: 'Include recent terminal command outputs'
+//   }
+// ]
+```
+
+### Get Context Content
+
+```typescript
+public async getContextContent(
+  type: ContextReferenceType,
+  options?: Record<string, unknown>
+): Promise<ContextReference | null>
+```
+
+Retrieves formatted context content by type.
+
+**Example:**
+```typescript
+// Get latest terminal command
+const terminalCtx = await contextManager.getContextContent('terminal');
+if (terminalCtx) {
+  console.log(terminalCtx.content);
+}
+
+// Get specific command by ID
+const specificCmd = await contextManager.getContextContent('terminal', {
+  commandId: 'term_1710345678901_a7x9k2'
+});
+
+// Get all workspace problems
+const problemsCtx = await contextManager.getContextContent('problems');
+```
+
+## Usage Examples
+
+### Attach Terminal Output to Prompt
+
+```typescript
+const latest = contextManager.terminal.getLatestCommand();
+if (latest && latest.exitCode !== 0) {
+  const formatted = contextManager.terminal.formatCommandForPrompt(latest);
+  const response = await askUser({
+    question: `The last command failed. Here's the output:\n\n${formatted}\n\nWhat should I do?`
+  }, provider, token);
+}
+```
+
+### Include Workspace Errors
+
+```typescript
+const errors = contextManager.problems.getProblems({
+  severity: ['error'],
+  maxProblems: 10
+});
+
+if (errors.length > 0) {
+  const formatted = contextManager.problems.formatProblemsForPrompt(errors);
+  const response = await askUser({
+    question: `Found ${errors.length} errors in the workspace:\n\n${formatted}\n\nShould I attempt to fix these?`
+  }, provider, token);
+}
+```
+
+### Combined Context
+
+```typescript
+const summary = contextManager.problems.getSummary();
+const latest = contextManager.terminal.getLatestCommand();
+
+let context = '';
+if (latest) {
+  context += contextManager.terminal.formatCommandForPrompt(latest) + '\n\n';
+}
+if (summary.errorCount > 0) {
+  const problems = contextManager.problems.getProblems({
+    severity: ['error'],
+    maxProblems: 5
+  });
+  context += contextManager.problems.formatProblemsForPrompt(problems);
+}
+
+const response = await askUser({
+  question: `Context:\n${context}\n\nWhat should we do next?`
+}, provider, token);
+```
+
+## Related APIs
+
+<CardGroup cols={2}>
+
+<Card title="ask_user Tool" icon="messages" href="/api/ask-user">
+  Interactive user communication with context attachments
+</Card>
+
+<Card title="MCP Server" icon="server" href="/api/mcp-setup">
+  Expose context providers via MCP protocol
+</Card>
+
+</CardGroup>

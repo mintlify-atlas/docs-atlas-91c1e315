@@ -1,0 +1,582 @@
+---
+title: 'MCP Server Endpoints'
+description: 'HTTP and SSE endpoint specifications for TaskSync MCP server'
+icon: 'route'
+---
+
+## Overview
+
+The TaskSync MCP server uses HTTP/SSE (Server-Sent Events) transport to communicate with clients. The server binds to `127.0.0.1` (localhost only) for security.
+
+**Base URL:** `http://localhost:{port}`
+
+**Default port:** `3579` (configurable via `tasksync.mcpPort`)
+
+## Transport Layer
+
+TaskSync uses the `StreamableHTTPServerTransport` from `@modelcontextprotocol/sdk`:
+
+```typescript mcpServer.ts
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+
+this.transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => `sess_${crypto.randomUUID()}`
+});
+
+await this.mcpServer.connect(this.transport);
+```
+
+### Session Management
+
+**Session ID format:** `sess_{uuid}`
+
+**Example:** `sess_a7b3c9d1-4e2f-8c5a-9b1d-3f7e6a8c2d9b`
+
+**Lifecycle:**
+1. Client establishes SSE connection at `/sse`
+2. Server generates unique session ID
+3. Client uses session ID for subsequent message requests
+4. Session remains active until client closes or times out
+
+## Endpoints
+
+### SSE Connection
+
+```http
+GET /sse HTTP/1.1
+Host: localhost:3579
+Accept: text/event-stream
+Cache-Control: no-cache
+```
+
+Establishes a Server-Sent Events stream for receiving server messages.
+
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+
+data: {"jsonrpc":"2.0","method":"notification","params":{...}}
+
+data: {"jsonrpc":"2.0","result":{...},"id":1}
+```
+
+**Implementation:**
+```typescript mcpServer.ts
+this.server = http.createServer(async (req, res) => {
+  const url = req.url || '/';
+
+  if (url === '/sse' || url.startsWith('/sse/') || url.startsWith('/sse?')) {
+    if (req.method === 'DELETE') {
+      try {
+        await this.transport?.handleRequest(req, res);
+      } catch (e) {
+        if (!res.headersSent) {
+          res.writeHead(202);
+          res.end('Session closed');
+        }
+      }
+      return;
+    }
+
+    const queryIndex = url.indexOf('?');
+    req.url = queryIndex !== -1 ? '/' + url.substring(queryIndex) : '/';
+    await this.transport?.handleRequest(req, res);
+    return;
+  }
+});
+```
+
+<ParamField query="sessionId" type="string">
+  Optional session identifier for reconnection.
+  
+  **Format:** `sess_{uuid}`
+  
+  **Example:** `/sse?sessionId=sess_a7b3c9d1-4e2f-8c5a-9b1d-3f7e6a8c2d9b`
+</ParamField>
+
+### Close SSE Connection
+
+```http
+DELETE /sse HTTP/1.1
+Host: localhost:3579
+```
+
+Gracefully closes an SSE connection.
+
+**Response:**
+```http
+HTTP/1.1 202 Accepted
+
+Session closed
+```
+
+### Send Message
+
+```http
+POST /message HTTP/1.1
+Host: localhost:3579
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "ask_user",
+    "arguments": {
+      "question": "Should I proceed?"
+    }
+  },
+  "id": 1
+}
+```
+
+Sends a JSON-RPC message to the server.
+
+**Implementation:**
+```typescript mcpServer.ts
+if (url.startsWith('/message') || url.startsWith('/messages')) {
+  await this.transport?.handleRequest(req, res);
+  return;
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"response\":\"Yes, proceed\",\"attachments\":[],\"queue\":false}"
+      }
+    ]
+  },
+  "id": 1
+}
+```
+
+<Note>
+The `/messages` plural endpoint is also supported as an alias for `/message`.
+</Note>
+
+## JSON-RPC Protocol
+
+### Request Format
+
+```typescript
+interface JsonRpcRequest {
+  jsonrpc: "2.0";
+  method: string;
+  params?: object;
+  id?: string | number;
+}
+```
+
+### Response Format
+
+```typescript
+interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  result?: any;
+  error?: {
+    code: number;
+    message: string;
+    data?: any;
+  };
+  id: string | number | null;
+}
+```
+
+## Tool Invocation
+
+### Request
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "ask_user",
+    "arguments": {
+      "question": "What color should the button be?"
+    }
+  },
+  "id": 42
+}
+```
+
+<ParamField path="method" type="string" required>
+  Must be `"tools/call"` for tool invocations.
+</ParamField>
+
+<ParamField path="params.name" type="string" required>
+  Tool name: `"ask_user"`
+</ParamField>
+
+<ParamField path="params.arguments" type="object" required>
+  Tool-specific arguments.
+  
+  **For ask_user:**
+  ```typescript
+  {
+    question: string; // Min 1 char, max 500,000 chars
+  }
+  ```
+</ParamField>
+
+<ParamField path="id" type="string | number" required>
+  Request identifier for matching responses.
+  
+  **Convention:** Incrementing integers (1, 2, 3...)
+</ParamField>
+
+### Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"response\":\"Blue\",\"attachments\":[],\"queue\":false}"
+      }
+    ]
+  },
+  "id": 42
+}
+```
+
+<ResponseField name="result.content" type="array" required>
+  Array of content parts (text and/or images).
+  
+  **Text part:**
+  ```typescript
+  {
+    type: "text",
+    text: string // JSON-encoded AskUserToolResult
+  }
+  ```
+  
+  **Image part:**
+  ```typescript
+  {
+    type: "image",
+    data: string,    // Base64-encoded image
+    mimeType: string // e.g., "image/png"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="id" type="string | number" required>
+  Matches the request ID.
+</ResponseField>
+
+### Response with Image Attachments
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"response\":\"Here's the screenshot\",\"attachments\":[\"file:///tmp/screenshot.png\"],\"queue\":false}"
+      },
+      {
+        "type": "image",
+        "data": "iVBORw0KGgoAAAANSUhEUgAA...",
+        "mimeType": "image/png"
+      }
+    ]
+  },
+  "id": 42
+}
+```
+
+## Error Responses
+
+### Validation Error
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": {
+      "issues": [
+        {
+          "code": "too_small",
+          "minimum": 1,
+          "type": "string",
+          "inclusive": true,
+          "message": "Question cannot be empty",
+          "path": ["question"]
+        }
+      ]
+    }
+  },
+  "id": 42
+}
+```
+
+**Common validation errors:**
+- `-32602` - Invalid params (Zod validation failure)
+- `-32600` - Invalid Request (malformed JSON-RPC)
+- `-32601` - Method not found (unknown tool name)
+
+### Cancellation Error
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32800,
+    "message": "Request cancelled"
+  },
+  "id": 42
+}
+```
+
+**Cause:** Client aborted the request via `AbortSignal`.
+
+## HTTP Status Codes
+
+<ResponseField name="200 OK" type="status">
+  Successful SSE connection or message processed.
+</ResponseField>
+
+<ResponseField name="202 Accepted" type="status">
+  Session closed via DELETE request.
+</ResponseField>
+
+<ResponseField name="404 Not Found" type="status">
+  Unknown endpoint (not `/sse` or `/message`).
+  
+  **Response:**
+  ```http
+  HTTP/1.1 404 Not Found
+  ```
+</ResponseField>
+
+<ResponseField name="500 Internal Server Error" type="status">
+  Unhandled server exception.
+  
+  **Response:**
+  ```http
+  HTTP/1.1 500 Internal Server Error
+  
+  Internal Server Error
+  ```
+</ResponseField>
+
+## Example Client Implementation
+
+### Establish Connection
+
+```typescript
+const eventSource = new EventSource('http://localhost:3579/sse');
+
+eventSource.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  console.log('Received:', message);
+  
+  if (message.result) {
+    // Handle tool result
+    const content = message.result.content[0];
+    const result = JSON.parse(content.text);
+    console.log('User response:', result.response);
+  }
+};
+
+eventSource.onerror = (error) => {
+  console.error('SSE error:', error);
+  eventSource.close();
+};
+```
+
+### Invoke Tool
+
+```typescript
+async function callAskUser(question: string, requestId: number) {
+  const response = await fetch('http://localhost:3579/message', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'ask_user',
+        arguments: { question }
+      },
+      id: requestId
+    })
+  });
+  
+  // Response will arrive via SSE eventSource.onmessage
+}
+
+// Usage
+await callAskUser('Should I deploy to production?', 1);
+```
+
+### Close Connection
+
+```typescript
+async function closeConnection() {
+  await fetch('http://localhost:3579/sse', {
+    method: 'DELETE'
+  });
+  
+  eventSource.close();
+}
+```
+
+## Server Binding
+
+**Interface:** `127.0.0.1` (localhost only)
+
+```typescript mcpServer.ts
+await new Promise<void>((resolve) => {
+  this.server?.listen(this.port, '127.0.0.1', () => resolve());
+});
+```
+
+<Warning>
+The server is intentionally bound to localhost only for security. Remote connections are not supported.
+</Warning>
+
+**Why localhost only?**
+1. **Security:** Prevents unauthorized access from network
+2. **Privacy:** User input stays on local machine
+3. **Performance:** No network latency
+4. **Simplicity:** No authentication/encryption needed
+
+## Debugging
+
+### Check Server Status
+
+```bash
+# Test if server is running
+curl http://localhost:3579/sse
+
+# Should receive SSE stream headers:
+# HTTP/1.1 200 OK
+# Content-Type: text/event-stream
+```
+
+### Monitor SSE Stream
+
+```bash
+# Watch SSE events in real-time
+curl -N http://localhost:3579/sse
+
+# Output:
+# data: {"jsonrpc":"2.0",...}
+```
+
+### Send Test Request
+
+```bash
+curl -X POST http://localhost:3579/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "ask_user",
+      "arguments": {
+        "question": "Test question?"
+      }
+    },
+    "id": 999
+  }'
+
+# Response arrives via SSE stream
+```
+
+### Check Port Usage
+
+```bash
+# macOS/Linux
+lsof -i :3579
+
+# Windows
+netstat -ano | findstr :3579
+```
+
+## Performance Considerations
+
+### Connection Limits
+
+- **HTTP server:** Node.js default (no explicit limit)
+- **Concurrent sessions:** Limited by system resources
+- **Request timeout:** None (requests may take indefinite time waiting for user)
+
+### Message Size Limits
+
+<ParamField path="Question length" type="constraint">
+  Maximum 500,000 characters (500KB text)
+</ParamField>
+
+<ParamField path="Image size" type="constraint">
+  Maximum 4MB per image (base64-encoded ~5.3MB)
+</ParamField>
+
+<ParamField path="Terminal output" type="constraint">
+  Maximum 50KB per command (truncated with indicator)
+</ParamField>
+
+### Optimization Tips
+
+Best practices for optimal performance:
+
+- **Reuse connections:** Keep SSE stream open for multiple requests
+- **Batch questions:** Combine related questions when possible
+- **Compress images:** Resize before attaching (target &lt;1MB)
+- **Limit context:** Only include relevant terminal/problems context
+
+## Security
+
+### Network Binding
+
+- **Bound to:** `127.0.0.1` (localhost only)
+- **Not accessible from:** Network, internet, other machines
+
+### Authentication
+
+- **None required:** Server assumes localhost = trusted
+- **Session isolation:** Each session has unique UUID
+
+### Input Validation
+
+- **Zod schemas:** All tool arguments validated before execution
+- **Length limits:** Prevents memory exhaustion attacks
+- **Type checking:** Rejects invalid parameter types
+
+### File Access
+
+- **Image attachments:** Only reads files explicitly provided by user
+- **Path validation:** Checks for `file://` scheme
+- **Size limits:** 4MB maximum prevents resource exhaustion
+
+## Related APIs
+
+<CardGroup cols={2}>
+
+<Card title="MCP Setup" icon="server" href="/api/mcp-setup">
+  Server configuration and client registration
+</Card>
+
+<Card title="ask_user Tool" icon="messages" href="/api/ask-user">
+  Tool specification and usage examples
+</Card>
+
+</CardGroup>

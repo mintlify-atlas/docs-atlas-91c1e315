@@ -1,0 +1,419 @@
+---
+title: 'File & Folder References'
+description: 'Attach files, folders, and context items to AI responses with # autocomplete'
+icon: 'hashtag'
+---
+
+<Info>
+**File References** allow you to attach files, folders, and context items (like terminal output or workspace problems) to your responses using `#` autocomplete.
+</Info>
+
+## Overview
+
+<Card title="Smart Autocomplete" icon="magnifying-glass">
+Type `#` in the TaskSync input box to search for files, folders, or context items. Selected items are attached to your response and sent to the AI.
+</Card>
+
+## Reference Types
+
+<Tabs>
+  <Tab title="Files">
+    Attach individual files to provide context:
+    
+    - Source code files (`.ts`, `.js`, `.py`, etc.)
+    - Configuration files (`package.json`, `tsconfig.json`)
+    - Documentation (`.md`, `.txt`)
+    - Images (`.png`, `.jpg`, `.svg`)
+    
+    Files are sent as URI attachments to the `ask_user` tool.
+  </Tab>
+  
+  <Tab title="Folders">
+    Attach entire folders to provide broader context:
+    
+    - Project directories
+    - Module folders
+    - Asset directories
+    
+    Folder contents are included in the response.
+  </Tab>
+  
+  <Tab title="Context Items">
+    Attach dynamic workspace context:
+    
+    - **#terminal** - Recent terminal output
+    - **#problems** - Workspace diagnostics (errors, warnings)
+    
+    Context content is resolved and inlined into the response text.
+  </Tab>
+</Tabs>
+
+## File Search
+
+### Search Configuration
+
+From `webviewProvider.ts:167-170`:
+
+```typescript
+private readonly _MAX_FILE_SEARCH_RESULTS = 500;
+private readonly _MAX_FOLDER_SEARCH_RESULTS = 1000;
+```
+
+### Search Exclusions
+
+TaskSync automatically excludes common build artifacts and dependencies from file search:
+
+From `constants/fileExclusions.ts`:
+
+```typescript
+export const FILE_SEARCH_EXCLUSION_PATTERNS: string[] = [
+    '**/node_modules/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.git/**',
+    '**/coverage/**',
+    '**/out/**',
+    '**/.vscode/**',
+    '**/*.min.js',
+    '**/*.min.css',
+    // ... (more patterns)
+];
+```
+
+### File Search Cache
+
+<Tip>
+File search results are cached for 5 seconds to improve performance during typing.
+</Tip>
+
+From `webviewProvider.ts:175-177`:
+
+```typescript
+// File search cache with TTL
+private _fileSearchCache: Map<string, { 
+    results: FileSearchResult[], 
+    timestamp: number 
+}> = new Map();
+private readonly _FILE_CACHE_TTL_MS = 5000;
+```
+
+## Context Manager
+
+<Card title="Dynamic Context" icon="rotate">
+Context items like `#terminal` and `#problems` provide real-time workspace information to the AI.
+</Card>
+
+### Context Types
+
+From `context/index.ts`:
+
+```typescript
+export enum ContextReferenceType {
+    Terminal = 'terminal',
+    Problems = 'problems'
+}
+```
+
+### Terminal Context
+
+From `context/TerminalContext.ts`:
+
+```typescript
+export class TerminalContext {
+    private static readonly MAX_TERMINAL_OUTPUT_LENGTH = 50000; // 50KB
+    
+    /**
+     * Get recent terminal output (last 50KB from active terminal)
+     */
+    public async getRecentOutput(): Promise<string | null> {
+        const activeTerminal = vscode.window.activeTerminal;
+        if (!activeTerminal) {
+            return null;
+        }
+        
+        // ... implementation
+    }
+}
+```
+
+### Problems Context
+
+From `context/ProblemsContext.ts`:
+
+```typescript
+export class ProblemsContext {
+    /**
+     * Get workspace diagnostics (errors, warnings, info)
+     */
+    public getProblems(): string {
+        const diagnostics = vscode.languages.getDiagnostics();
+        const problems: string[] = [];
+        
+        for (const [uri, fileDiagnostics] of diagnostics) {
+            for (const diagnostic of fileDiagnostics) {
+                const severity = this._getSeverityLabel(
+                    diagnostic.severity
+                );
+                const location = `${uri.fsPath}:${diagnostic.range.start.line + 1}`;
+                problems.push(
+                    `[${severity}] ${location}: ${diagnostic.message}`
+                );
+            }
+        }
+        
+        return problems.length > 0 
+            ? problems.join('\n') 
+            : 'No problems found in workspace.';
+    }
+}
+```
+
+## Attachment Info
+
+From `webviewProvider.ts:14-22`:
+
+```typescript
+// Attachment info
+export interface AttachmentInfo {
+    id: string;
+    name: string;
+    uri: string;
+    isTemporary?: boolean;
+    isFolder?: boolean;
+    isTextReference?: boolean;
+}
+```
+
+## File Search Results
+
+From `webviewProvider.ts:24-32`:
+
+```typescript
+// File search result (also used for context items like #terminal, #problems)
+export interface FileSearchResult {
+    name: string;
+    path: string;
+    uri: string;
+    icon: string;
+    isFolder?: boolean;
+    isContext?: boolean; // true for #terminal, #problems context items
+}
+```
+
+## Context Resolution
+
+<Info>
+Context references are automatically resolved when the user responds to an `ask_user` tool call.
+</Info>
+
+From `tools.ts:87-101`:
+
+```typescript
+// Process attachments to resolve context content
+if (result.attachments && result.attachments.length > 0) {
+    for (const att of result.attachments) {
+        if (att.uri.startsWith('context://')) {
+            // Start of context content
+            responseText += `\n\n[Attached Context: ${att.name}]\n`;
+
+            const content = await provider.resolveContextContent(att.uri);
+            if (content) {
+                responseText += content;
+            } else {
+                responseText += '(Context content not available)';
+            }
+
+            // End of context content
+            responseText += '\n[End of Context]\n';
+        } else {
+            // Regular file attachment
+            validAttachments.push(att.uri);
+        }
+    }
+}
+```
+
+## Message Types
+
+From `webviewProvider.ts:74-129`:
+
+```typescript
+type ToWebviewMessage =
+    | { type: 'fileSearchResults'; files: FileSearchResult[] }
+    | { type: 'updateAttachments'; attachments: AttachmentInfo[] }
+    | { type: 'imageSaved'; attachment: AttachmentInfo }
+    | { 
+        type: 'contextSearchResults'; 
+        suggestions: Array<{ 
+            type: string; 
+            label: string; 
+            description: string; 
+            detail: string 
+        }> 
+      }
+    | { 
+        type: 'contextReferenceAdded'; 
+        reference: { 
+            id: string; 
+            type: string; 
+            label: string; 
+            content: string 
+        } 
+      }
+    // ...
+
+type FromWebviewMessage =
+    | { type: 'searchFiles'; query: string }
+    | { type: 'addFileReference'; file: FileSearchResult }
+    | { type: 'addAttachment' }
+    | { type: 'removeAttachment'; attachmentId: string }
+    | { type: 'saveImage'; data: string; mimeType: string }
+    | { type: 'searchContext'; query: string }
+    | { 
+        type: 'selectContextReference'; 
+        contextType: string; 
+        options?: Record<string, unknown> 
+      }
+    // ...
+```
+
+## Image Support
+
+<Card title="Vision Model Support" icon="image">
+Image attachments are automatically converted to `LanguageModelDataPart` for vision-capable models.
+</Card>
+
+### Supported Formats
+
+From `utils/imageUtils.ts`:
+
+```typescript
+export function getImageMimeType(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+        case '.png': return 'image/png';
+        case '.jpg':
+        case '.jpeg': return 'image/jpeg';
+        case '.gif': return 'image/gif';
+        case '.webp': return 'image/webp';
+        case '.svg': return 'image/svg+xml';
+        default: return 'application/octet-stream';
+    }
+}
+```
+
+### Image Processing
+
+From `tools.ts:167-199`:
+
+```typescript
+// Add image attachments as LanguageModelDataPart for vision models
+if (result.attachments && result.attachments.length > 0) {
+    const imagePromises = result.attachments.map(async (uri) => {
+        try {
+            const fileUri = vscode.Uri.parse(uri);
+            const filePath = fileUri.fsPath;
+
+            if (!fs.existsSync(filePath)) {
+                console.error(
+                    '[TaskSync] Attachment file does not exist:', 
+                    filePath
+                );
+                return null;
+            }
+
+            const mimeType = getImageMimeType(filePath);
+
+            // Only process image files
+            if (mimeType !== 'application/octet-stream') {
+                const data = await readFileAsBuffer(filePath);
+                const dataPart = vscode.LanguageModelDataPart.image(
+                    data, 
+                    mimeType
+                );
+                return dataPart;
+            }
+            return null;
+        } catch (error) {
+            console.error(
+                '[TaskSync] Failed to read image attachment:', 
+                error
+            );
+            return null;
+        }
+    });
+
+    const imageParts = await Promise.all(imagePromises);
+    for (const part of imageParts) {
+        if (part !== null) {
+            resultParts.push(part);
+        }
+    }
+}
+```
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Bug Fixes">
+    Attach the problematic file and terminal errors:
+    
+    1. Type `#` and select the buggy file
+    2. Type `#terminal` to attach recent error output
+    3. Describe the issue
+    4. Send to AI with full context
+  </Tab>
+  
+  <Tab title="Code Review">
+    Reference multiple related files:
+    
+    1. Type `#` and select the implementation file
+    2. Type `#` and select the test file
+    3. Type `#` and select related documentation
+    4. Ask for review feedback
+  </Tab>
+  
+  <Tab title="Refactoring">
+    Attach the entire module folder:
+    
+    1. Type `#` and select the folder to refactor
+    2. Type `#problems` to see existing diagnostics
+    3. Describe the refactoring goal
+    4. Let AI work with full module context
+  </Tab>
+  
+  <Tab title="Design Feedback">
+    Attach images and mockups:
+    
+    1. Paste or drag image into input box
+    2. Add related CSS/component files with `#`
+    3. Ask for design improvements
+    4. Vision model analyzes visual and code context
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Selective Context" icon="filter">
+    Attach only relevant files. Too much context can dilute the AI's focus.
+  </Card>
+  
+  <Card title="Fresh Context" icon="arrows-rotate">
+    Use `#terminal` and `#problems` for real-time workspace state.
+  </Card>
+  
+  <Card title="Visual Context" icon="camera">
+    Paste screenshots for UI/design questions with vision-capable models.
+  </Card>
+  
+  <Card title="Folder Context" icon="folder">
+    Attach folders for architectural questions or large-scale refactoring.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [ask_user Tool](/features/ask-user-tool) - Core tool that receives attachments
+- [Queue Mode](/features/queue-mode) - Queue prompts with attachments
+- [Context Manager](/api-reference/context-manager) - Internal context resolution API

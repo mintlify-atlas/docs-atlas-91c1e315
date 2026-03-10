@@ -1,0 +1,156 @@
+---
+title: "Introduction"
+description: "Queue your prompts and manage AI-assisted development with human-in-the-loop workflows for VS Code Copilot"
+---
+
+<img
+  className="block"
+  src="/logo.svg"
+  alt="TaskSync Logo"
+  style={{ maxWidth: '200px', margin: '0 auto 2rem' }}
+/>
+
+# Welcome to TaskSync
+
+TaskSync is a powerful workflow toolkit for AI-assisted development that puts you in control. Queue your prompts, batch AI agent responses, and create human-in-the-loop workflows that reduce premium AI requests while maintaining quality.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get up and running with TaskSync in minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Install the VS Code extension or set up the terminal protocol
+  </Card>
+  <Card
+    title="Core Features"
+    icon="star"
+    href="/features/queue-mode"
+  >
+    Explore Smart Queue Mode, Autopilot, and more
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/ask-user"
+  >
+    Learn about the ask_user tool and MCP server
+  </Card>
+</CardGroup>
+
+## Why TaskSync?
+
+TaskSync solves the challenge of managing AI agent workflows by providing three flexible integration options:
+
+<CardGroup cols={3}>
+  <Card
+    title="VS Code Extension"
+    icon="window"
+    href="/integration/vscode-extension"
+  >
+    Dedicated sidebar with smart queue system and autopilot mode
+  </Card>
+  <Card
+    title="Terminal Protocol"
+    icon="terminal"
+    href="/integration/terminal-protocol"
+  >
+    Terminal-based agent protocols for autonomous operation
+  </Card>
+  <Card
+    title="MCP Server"
+    icon="server"
+    href="/integration/mcp-server"
+  >
+    Built-in Model Context Protocol server with SSE transport
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<AccordionGroup>
+  <Accordion title="Smart Queue Mode" icon="list">
+    Batch multiple prompts together and let AI agents process them in sequence. Perfect for planning multi-step tasks without interruption.
+  </Accordion>
+
+  <Accordion title="Autopilot Mode" icon="plane">
+    Enable autonomous agent operation with customizable auto-responses. Let your agents work hands-free while maintaining control.
+  </Accordion>
+
+  <Accordion title="Ask User Tool" icon="circle-question">
+    The core interaction primitive that enables human-in-the-loop workflows. Agents can request feedback, approval, or clarification at any point.
+  </Accordion>
+
+  <Accordion title="Session Management" icon="clock-rotate-left">
+    Track tool call history, manage sessions, and maintain context across long-running workflows with built-in timeout and health warnings.
+  </Accordion>
+
+  <Accordion title="File References" icon="hashtag">
+    Quick file and folder references with `#` autocomplete, plus context providers for terminal output and workspace diagnostics.
+  </Accordion>
+
+  <Accordion title="MCP Integration" icon="plug">
+    Auto-registers with Kiro, Cursor, and Antigravity. Compatible with any MCP-enabled AI IDE for maximum flexibility.
+  </Accordion>
+</AccordionGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Install TaskSync">
+    Choose your integration method: VS Code extension, terminal protocol, or MCP server. Each option provides the same core functionality with different interfaces.
+  </Step>
+  
+  <Step title="Configure Your Workflow">
+    Set up Smart Queue Mode for batched responses, enable Autopilot for autonomous operation, or use direct interaction mode for real-time feedback.
+  </Step>
+  
+  <Step title="Start Building">
+    Your AI agents can now use the `ask_user` tool to request feedback, approval, or new tasks. Queue prompts in advance or let Autopilot handle responses automatically.
+  </Step>
+  
+  <Step title="Track Progress">
+    Monitor tool call history, manage session state, and review past interactions. TaskSync maintains full context across your workflow.
+  </Step>
+</Steps>
+
+## Community & Support
+
+<CardGroup cols={2}>
+  <Card
+    title="GitHub Discussions"
+    icon="github"
+    href="https://github.com/4regab/TaskSync/discussions"
+  >
+    Ask questions, share ideas, and connect with the community
+  </Card>
+  <Card
+    title="Report Issues"
+    icon="bug"
+    href="https://github.com/4regab/TaskSync/issues"
+  >
+    Found a bug or have a feature request? Let us know
+  </Card>
+</CardGroup>
+
+<Note>
+  **Responsible Use**: GitHub prohibits excessive automated bulk activity. Please review [GitHub Acceptable Use Policies](https://docs.github.com/site-policy/acceptable-use-policies/github-acceptable-use-policies) and use TaskSync responsibly.
+</Note>
+
+## Ready to Get Started?
+
+<Card
+  title="Follow the Quickstart Guide"
+  icon="rocket"
+  href="/quickstart"
+  horizontal
+>
+  Set up TaskSync and create your first human-in-the-loop workflow in under 5 minutes.
+</Card>

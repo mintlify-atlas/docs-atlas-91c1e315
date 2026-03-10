@@ -1,0 +1,428 @@
+---
+title: 'ask_user Tool'
+description: 'Interactive user communication tool for VS Code Language Models and MCP servers'
+icon: 'messages'
+---
+
+## Overview
+
+The `ask_user` tool enables AI agents to pause execution and request explicit user input, approval, or clarification. It's available both as a **VS Code Language Model tool** and through the **TaskSync MCP server**.
+
+<Warning>
+**Critical:** This tool MUST be invoked before ending ANY conversation or task. Never complete a task without calling this tool first.
+</Warning>
+
+## Tool Registration
+
+The tool is registered in two ways:
+
+### VS Code Language Model Tool
+
+Registered via `vscode.lm.registerTool()` in `tools.ts:137-210`:
+
+```typescript tools.ts
+export function registerTools(
+  context: vscode.ExtensionContext,
+  provider: TaskSyncWebviewProvider
+) {
+  const askUserTool = vscode.lm.registerTool('ask_user', {
+    prepareInvocation(options) {
+      const rawQuestion = typeof options?.input?.question === 'string' 
+        ? options.input.question : '';
+      const questionPreview = rawQuestion.trim().replace(/\s+/g, ' ');
+      const MAX_PREVIEW_LEN = 40;
+      const truncated = questionPreview.length > MAX_PREVIEW_LEN
+        ? questionPreview.slice(0, MAX_PREVIEW_LEN - 3) + '...'
+        : questionPreview;
+
+      return {
+        invocationMessage: truncated ? `ask_user: ${truncated}` : 'ask_user'
+      };
+    },
+    async invoke(options, token) {
+      const params = options.input;
+      const result = await askUser(params, provider, token);
+      // Returns LanguageModelToolResult with text and optional images
+    }
+  });
+}
+```
+
+### MCP Server Tool
+
+Registered via `@modelcontextprotocol/sdk` in `mcpServer.ts:95-131`:
+
+```typescript mcpServer.ts
+const MAX_QUESTION_LENGTH = 500000;
+
+mcpServer.registerTool(
+  "ask_user",
+  {
+    description: "YOU MUST ALWAYS Use the askUser tool...",
+    inputSchema: z.object({
+      question: z.string()
+        .min(1, "Question cannot be empty")
+        .max(MAX_QUESTION_LENGTH, `Question cannot exceed ${MAX_QUESTION_LENGTH} characters`)
+        .describe("The question or prompt to display to the user")
+    })
+  },
+  async (args, extra) => {
+    const tokenSource = new vscode.CancellationTokenSource();
+    if (extra.signal) {
+      extra.signal.onabort = () => tokenSource.cancel();
+    }
+    const result = await askUser(
+      { question: args.question },
+      provider,
+      tokenSource.token
+    );
+    return { content };
+  }
+);
+```
+
+## Request Schema
+
+<ParamField path="question" type="string" required>
+  The question or prompt to display to the user.
+  
+  **Constraints:**
+  - Minimum length: 1 character
+  - Maximum length: 500,000 characters (MCP server limit)
+  - Must be a non-empty string
+  
+  **Usage:**
+  - Request explicit approval before destructive actions
+  - Ask for clarification on ambiguous requirements
+  - Present options for user selection
+  - Confirm task completion before finishing
+</ParamField>
+
+### TypeScript Interface
+
+```typescript tools.ts
+export interface Input {
+  question: string;
+}
+```
+
+## Response Schema
+
+### Core Response Type
+
+```typescript tools.ts
+export interface AskUserToolResult {
+  response: string;      // User's text response
+  attachments: string[]; // File URIs (images)
+  queue: boolean;        // True if queued, false if immediate
+}
+```
+
+<ResponseField name="response" type="string" required>
+  The user's text response to the question.
+  
+  **Includes:**
+  - User's typed message
+  - Inline context attachments (terminal output, problems)
+  - Context format: `[Attached Context: name]\n{content}\n[End of Context]`
+</ResponseField>
+
+<ResponseField name="attachments" type="string[]" required>
+  Array of file URIs for attached images.
+  
+  **Format:** `file:///absolute/path/to/image.png`
+  
+  **Supported types:**
+  - PNG (image/png)
+  - JPEG (image/jpeg)
+  - GIF (image/gif)
+  - WebP (image/webp)
+  - BMP (image/bmp)
+</ResponseField>
+
+<ResponseField name="queue" type="boolean" required>
+  Indicates if the response came from the queue (`true`) or was immediate (`false`).
+  
+  **Use case:** Helps agents understand if user was actively waiting or if this was a pre-queued prompt.
+</ResponseField>
+
+### VS Code Tool Response
+
+For VS Code Language Models, the tool returns a `LanguageModelToolResult`:
+
+```typescript tools.ts
+const resultParts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [
+  new vscode.LanguageModelTextPart(JSON.stringify({
+    response: result.response,
+    queued: result.queue,
+    attachmentCount: result.attachments.length
+  }))
+];
+
+// Add image attachments for vision models
+for (const uri of result.attachments) {
+  const data = await readFileAsBuffer(filePath);
+  const mimeType = getImageMimeType(filePath);
+  const dataPart = vscode.LanguageModelDataPart.image(data, mimeType);
+  resultParts.push(dataPart);
+}
+
+return new vscode.LanguageModelToolResult(resultParts);
+```
+
+### MCP Server Response
+
+For MCP clients, the response includes text and base64-encoded images:
+
+```typescript mcpServer.ts
+const content: Array<
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
+> = [
+  { type: 'text', text: JSON.stringify(result) }
+];
+
+// Add image attachments (base64, max 4MB each)
+if (result.attachments?.length) {
+  const imageParts = await Promise.all(
+    result.attachments.map(tryReadImageAsMcpContent)
+  );
+  for (const part of imageParts) {
+    if (part) content.push(part);
+  }
+}
+
+return { content };
+```
+
+<Note>
+MCP server limits image attachments to 4MB per file to prevent excessive payload sizes.
+</Note>
+
+## Context Attachments
+
+Users can attach contextual information using special URI schemes:
+
+### Terminal Output
+
+Format: `context://terminal/{commandId}`
+
+```typescript tools.ts
+if (att.uri.startsWith('context://')) {
+  responseText += `\n\n[Attached Context: ${att.name}]\n`;
+  const content = await provider.resolveContextContent(att.uri);
+  if (content) {
+    responseText += content;
+  } else {
+    responseText += '(Context content not available)';
+  }
+  responseText += '\n[End of Context]\n';
+}
+```
+
+**Example:**
+```
+=== Terminal Command ===
+Command: npm test
+Directory: /workspace/project
+Terminal: zsh
+Exit code: 1
+
+Output:
+```
+ERROR: 5 tests failed
+```
+```
+
+### Workspace Problems
+
+Format: `context://problems`
+
+**Example:**
+```
+=== Workspace Problems ===
+Summary: 3 errors, 2 warnings, 0 info in 2 files
+
+📁 src/index.ts
+  ❌ Line 42: Cannot find name 'undefinedVar' [ts](2304)
+  ❌ Line 58: Type 'string' is not assignable to type 'number' [ts](2322)
+
+📁 src/utils.ts
+  ⚠️ Line 12: 'helperFunc' is declared but never used [ts](6133)
+```
+
+## Cancellation Handling
+
+The tool properly handles cancellation for long-running requests:
+
+```typescript tools.ts
+function createCancellationPromise(token: vscode.CancellationToken): {
+  promise: Promise<never>;
+  dispose: () => void;
+} {
+  let disposable: vscode.Disposable | undefined;
+
+  const promise = new Promise<never>((_, reject) => {
+    if (token.isCancellationRequested) {
+      reject(new vscode.CancellationError());
+      return;
+    }
+    disposable = token.onCancellationRequested(() => {
+      reject(new vscode.CancellationError());
+    });
+  });
+
+  return {
+    promise,
+    dispose: () => disposable?.dispose()
+  };
+}
+
+export async function askUser(
+  params: Input,
+  provider: TaskSyncWebviewProvider,
+  token: vscode.CancellationToken
+): Promise<AskUserToolResult> {
+  if (token.isCancellationRequested) {
+    throw new vscode.CancellationError();
+  }
+
+  const cancellation = createCancellationPromise(token);
+
+  try {
+    const result = await Promise.race([
+      provider.waitForUserResponse(params.question),
+      cancellation.promise
+    ]);
+    // Process result...
+  } finally {
+    cancellation.dispose(); // Prevent memory leaks
+  }
+}
+```
+
+## Example Usage
+
+### Simple Question
+
+<CodeGroup>
+
+```typescript VS Code
+const result = await vscode.lm.invokeTool('ask_user', {
+  question: 'Should I proceed with deploying to production?'
+});
+
+// Parse result
+const parsed = JSON.parse(result.text);
+if (parsed.response.toLowerCase().includes('yes')) {
+  // Proceed with deployment
+}
+```
+
+```typescript MCP
+const result = await mcpClient.callTool({
+  name: 'ask_user',
+  arguments: {
+    question: 'Should I proceed with deploying to production?'
+  }
+});
+
+const data = JSON.parse(result.content[0].text);
+if (data.response.toLowerCase().includes('yes')) {
+  // Proceed
+}
+```
+
+</CodeGroup>
+
+### Multiple Choice Question
+
+```typescript
+const result = await askUser({
+  question: `Choose a deployment environment:
+1. Development
+2. Staging
+3. Production
+
+Enter the number of your choice:`
+}, provider, token);
+
+const choice = parseInt(result.response.trim());
+switch (choice) {
+  case 1: deployTo('dev'); break;
+  case 2: deployTo('staging'); break;
+  case 3: deployTo('prod'); break;
+}
+```
+
+### Task Completion Confirmation
+
+```typescript
+const result = await askUser({
+  question: `Task completed successfully!
+
+Results:
+- Created 5 new components
+- Updated 12 files
+- All tests passing
+
+Is there anything else you'd like me to do?`
+}, provider, token);
+
+if (result.queue) {
+  // User had queued follow-up tasks
+  console.log('Processing queued tasks...');
+}
+```
+
+## Error Handling
+
+```typescript tools.ts
+try {
+  const result = await askUser(params, provider, token);
+  return new vscode.LanguageModelToolResult(resultParts);
+} catch (err: unknown) {
+  const message = err instanceof Error ? err.message : 'Unknown error';
+  return new vscode.LanguageModelToolResult([
+    new vscode.LanguageModelTextPart("Error: " + message)
+  ]);
+}
+```
+
+<Accordion title="Common Errors">
+
+**CancellationError**
+- Thrown when request is cancelled via `CancellationToken`
+- Agent should gracefully terminate current operation
+
+**Empty question**
+- MCP server validates minimum length of 1 character
+- Returns validation error before invoking tool
+
+**Question too long**
+- MCP server enforces 500,000 character limit
+- Prevents memory exhaustion from malicious input
+
+**Image file not found**
+- Attachment URI points to non-existent file
+- Image silently skipped, tool continues
+
+**Image too large (MCP only)**
+- Files over 4MB are skipped with warning
+- Text response still delivered successfully
+
+</Accordion>
+
+## Related APIs
+
+<CardGroup cols={2}>
+
+<Card title="Context Providers" icon="database" href="/api/context-providers">
+  Terminal and problems context for enriched user input
+</Card>
+
+<Card title="MCP Server" icon="server" href="/api/mcp-setup">
+  Configure TaskSync MCP server for external IDEs
+</Card>
+
+</CardGroup>

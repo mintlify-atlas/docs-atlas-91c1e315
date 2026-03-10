@@ -1,0 +1,485 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for TaskSync
+---
+
+This guide covers common issues you might encounter with TaskSync and how to resolve them.
+
+## Installation & Activation Issues
+
+<Accordion title="Extension not showing in sidebar">
+  **Symptoms:** TaskSync icon doesn't appear in VS Code activity bar
+
+  **Solutions:**
+  1. Check VS Code version requirements (minimum v1.90.0)
+  2. Restart VS Code
+  3. Verify extension is installed and enabled:
+     - Open Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`)
+     - Search for "TaskSync"
+     - Ensure it shows "Enabled"
+  4. Check Output panel for activation errors:
+     - View → Output → Select "TaskSync" from dropdown
+
+  <Note>
+    TaskSync activates on startup (`onStartupFinished` activation event). If you see no errors in Output, the extension loaded successfully.
+  </Note>
+</Accordion>
+
+<Accordion title="MCP server fails to start">
+  **Symptoms:** Error messages about MCP server in Output panel
+
+  **Solutions:**
+  1. Check port availability (default: 3579):
+     ```bash
+     # Linux/macOS
+     lsof -i :3579
+     
+     # Windows
+     netstat -ano | findstr :3579
+     ```
+  2. Try a different port:
+     ```json
+     "tasksync.mcpPort": 0  // Dynamic port assignment
+     ```
+  3. Disable MCP if not using external IDEs:
+     ```json
+     {
+       "tasksync.mcpEnabled": false,
+       "tasksync.mcpAutoStartIfClients": false
+     }
+     ```
+  4. Restart MCP server manually:
+     - Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`)
+     - Run: "TaskSync: Restart MCP Server"
+
+  <Warning>
+    Port conflicts can prevent MCP server startup. Use port 0 for automatic assignment if 3579 is in use.
+  </Warning>
+</Accordion>
+
+<Accordion title="Webview not loading or blank screen">
+  **Symptoms:** TaskSync sidebar shows blank screen or loading indefinitely
+
+  **Solutions:**
+  1. Refresh the webview:
+     - Close TaskSync sidebar
+     - Reopen from activity bar
+  2. Check for JavaScript errors:
+     - Help → Toggle Developer Tools
+     - Check Console tab for errors
+  3. Clear VS Code cache:
+     ```bash
+     # Linux/macOS
+     rm -rf ~/.config/Code/Cache/*
+     
+     # Windows
+     rmdir /s %APPDATA%\Code\Cache
+     ```
+  4. Reinstall extension
+
+  <Tip>
+    If the webview shows errors about "webview not ready", this is a timing issue. The extension polls for webview readiness automatically.
+  </Tip>
+</Accordion>
+
+## Agent Interaction Issues
+
+<Accordion title="ask_user tool not triggering">
+  **Symptoms:** Agent doesn't use `ask_user` tool or questions don't appear
+
+  **Solutions:**
+  1. Verify VS Code Copilot agent mode is enabled
+  2. Check that TaskSync sidebar is open and visible
+  3. Review agent instructions to ensure `ask_user` tool is available
+  4. Check Output panel for tool registration errors
+  5. Try sending a message manually to wake up the webview
+
+  <Note>
+    The `ask_user` tool is registered as a VS Code language model tool. It requires VS Code Copilot to be active.
+  </Note>
+</Accordion>
+
+<Accordion title="Queue not processing prompts">
+  **Symptoms:** Queued prompts remain in queue without being sent
+
+  **Solutions:**
+  1. Verify Queue Mode is enabled (toggle should show "Queue: ON")
+  2. Check that agent is actually calling `ask_user` tool
+  3. Look for pending requests in tool call history
+  4. Try disabling and re-enabling Queue Mode
+  5. Start a new session to clear stale state
+
+  <Warning>
+    Queue Mode only works when the agent triggers `ask_user`. If the agent isn't asking questions, queued items won't be sent.
+  </Warning>
+</Accordion>
+
+<Accordion title="Autopilot not responding">
+  **Symptoms:** Autopilot enabled but agent still waits for manual input
+
+  **Solutions:**
+  1. Verify Autopilot is enabled (check toggle in sidebar)
+  2. Check settings:
+     ```json
+     {
+       "tasksync.autopilot": true,
+       "tasksync.autopilotText": "Continue with your best judgment."
+     }
+     ```
+  3. Ensure Queue Mode isn't active (queued items take priority)
+  4. Check that response timeout isn't set to 0 (disabled)
+  5. Look for errors in Output panel
+
+  <Tip>
+    Queue Mode takes priority over Autopilot. If you have queued prompts, they'll be sent first.
+  </Tip>
+</Accordion>
+
+<Accordion title="Response timeout not working">
+  **Symptoms:** No auto-response after configured timeout period
+
+  **Solutions:**
+  1. Verify timeout is not set to "0" (disabled):
+     ```json
+     "tasksync.responseTimeout": "60"  // 60 minutes
+     ```
+  2. Check that agent has actually triggered `ask_user`
+  3. Look for timeout timer in UI (should show countdown)
+  4. Verify max consecutive auto-responses hasn't been reached:
+     ```json
+     "tasksync.maxConsecutiveAutoResponses": 5
+     ```
+  5. Restart VS Code to reset timeout state
+
+  <Note>
+    The timeout timer starts when `ask_user` is triggered. If no prompt appears, the agent hasn't called the tool.
+  </Note>
+</Accordion>
+
+## Session Management Issues
+
+<Accordion title="Session warning not appearing">
+  **Symptoms:** No warning after 2 hours of session activity
+
+  **Solutions:**
+  1. Check session warning setting:
+     ```json
+     "tasksync.sessionWarningHours": 2  // Set to 0 to disable
+     ```
+  2. Verify session timer is running (visible in title bar)
+  3. Warning appears only once per session
+  4. If timer shows frozen/terminated state, start new session
+</Accordion>
+
+<Accordion title="Session timer not updating">
+  **Symptoms:** Session timer stuck or showing incorrect time
+
+  **Solutions:**
+  1. Check if session is terminated (timer freezes on termination)
+  2. Start a new session to reset timer:
+     - Click "New Session" button in title bar
+     - Or run command: "TaskSync: New Session"
+  3. If timer still stuck, reload VS Code window:
+     - Command Palette → "Developer: Reload Window"
+
+  <Note>
+    The session timer freezes when the session is terminated. This is expected behavior.
+  </Note>
+</Accordion>
+
+<Accordion title="Cannot start new session">
+  **Symptoms:** New Session button doesn't clear current session
+
+  **Solutions:**
+  1. Check for confirmation dialog (may appear behind other windows)
+  2. Try command palette:
+     - Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`)
+     - Run: "TaskSync: New Session"
+  3. Look for errors in Output panel
+  4. Manually clear state by reloading VS Code window
+
+  <Tip>
+    Starting a new session cancels pending requests, resets timeout timer, and clears the auto-response counter.
+  </Tip>
+</Accordion>
+
+## Context & File Reference Issues
+
+<Accordion title="# autocomplete not showing files">
+  **Symptoms:** Typing `#` doesn't show file/folder suggestions
+
+  **Solutions:**
+  1. Ensure cursor is in the input field
+  2. Type `#` and wait 1-2 seconds for indexing
+  3. Check workspace has files (empty workspaces show no results)
+  4. Verify VS Code has indexed the workspace
+  5. Try reloading VS Code window
+
+  <Note>
+    File search results are cached for performance. Large workspaces may take a moment to index initially.
+  </Note>
+</Accordion>
+
+<Accordion title="#terminal or #problems not attaching">
+  **Symptoms:** Context references don't include terminal/diagnostics data
+
+  **Solutions:**
+  1. Verify terminal is active and has output:
+     - Open integrated terminal
+     - Run a command to generate output
+  2. Check for workspace diagnostics:
+     - View → Problems
+     - Ensure errors/warnings are present
+  3. Try refreshing context:
+     - Close and reopen TaskSync sidebar
+  4. Look for context provider errors in Output panel
+</Accordion>
+
+<Accordion title="Image paste not working">
+  **Symptoms:** Pasting or dragging images doesn't attach them
+
+  **Solutions:**
+  1. Verify image format is supported (PNG, JPG, GIF)
+  2. Check image size (very large images may fail)
+  3. Try drag-drop instead of paste (or vice versa)
+  4. Look for errors in Developer Tools console:
+     - Help → Toggle Developer Tools
+  5. Ensure clipboard contains actual image data, not file path
+
+  <Warning>
+    Images are temporarily stored and cleaned up on session clear. Don't rely on them persisting across sessions.
+  </Warning>
+</Accordion>
+
+## Settings & Configuration Issues
+
+<Accordion title="Settings not persisting">
+  **Symptoms:** Settings reset after reloading VS Code
+
+  **Solutions:**
+  1. Check settings location:
+     - User settings: Apply globally
+     - Workspace settings: Apply per-project
+  2. Verify settings are in correct format:
+     ```json
+     {
+       "tasksync.autopilot": true,  // boolean
+       "tasksync.mcpPort": 3579,    // number
+       "tasksync.responseTimeout": "60"  // string (enum)
+     }
+     ```
+  3. Check for JSON syntax errors in `settings.json`
+  4. Look for conflicting settings in workspace vs user settings
+
+  <Note>
+    Queue, history, and settings are workspace-scoped. Each project maintains its own isolated state.
+  </Note>
+</Accordion>
+
+<Accordion title="Reusable prompts not appearing">
+  **Symptoms:** Typing `/` doesn't show saved prompts
+
+  **Solutions:**
+  1. Verify prompts are defined correctly:
+     ```json
+     "tasksync.reusablePrompts": [
+       {
+         "name": "review",
+         "prompt": "Review this code..."
+       }
+     ]
+     ```
+  2. Check for typos in prompt names
+  3. Ensure both `name` and `prompt` fields are present
+  4. Reload VS Code window to refresh settings
+
+  <Tip>
+    Prompt names are case-sensitive. Type `/` and start typing the exact name.
+  </Tip>
+</Accordion>
+
+<Accordion title="Human-like delay not working">
+  **Symptoms:** Auto-responses appear immediately without delay
+
+  **Solutions:**
+  1. Verify setting is enabled:
+     ```json
+     "tasksync.humanLikeDelay": true
+     ```
+  2. Check min/max delay values are reasonable:
+     ```json
+     {
+       "tasksync.humanLikeDelayMin": 2,  // seconds
+       "tasksync.humanLikeDelayMax": 6   // seconds
+     }
+     ```
+  3. Ensure max is greater than min
+  4. Human-like delay only applies to auto-responses (Queue, Autopilot, Timeout)
+
+  <Note>
+    Manual responses sent by clicking the send button don't use human-like delays.
+  </Note>
+</Accordion>
+
+## Performance Issues
+
+<Accordion title="Extension running slowly">
+  **Symptoms:** TaskSync UI lags or becomes unresponsive
+
+  **Solutions:**
+  1. Check number of tool calls in current session:
+     - Large sessions (>50 tool calls) may degrade performance
+     - Start a new session to reset state
+  2. Clear old history:
+     - History is stored per-workspace
+     - Delete old workspace folders to free storage
+  3. Reduce file references:
+     - Don't attach entire directories
+     - Reference specific files instead
+  4. Check VS Code performance:
+     - Help → Toggle Developer Tools → Performance tab
+
+  <Warning>
+    Sessions beyond 4 hours or 50 tool calls may produce lower-quality results and impact performance.
+  </Warning>
+</Accordion>
+
+<Accordion title="High memory usage">
+  **Symptoms:** VS Code uses excessive RAM
+
+  **Solutions:**
+  1. Start a new session to clear context
+  2. Close unused tool call history cards
+  3. Reduce number of file attachments
+  4. Check for memory leaks:
+     - Help → Toggle Developer Tools → Memory tab
+  5. Restart VS Code to free memory
+
+  <Tip>
+    TaskSync uses debounced history saves (2s) for better disk I/O performance. This reduces writes but may temporarily increase memory usage.
+  </Tip>
+</Accordion>
+
+<Accordion title="File search is slow">
+  **Symptoms:** `#` autocomplete takes long time to show results
+
+  **Solutions:**
+  1. File search results are cached after first use
+  2. Exclude large directories from search:
+     - VS Code handles exclusions automatically via `files.exclude`
+  3. Wait for VS Code to finish indexing workspace
+  4. Consider using more specific search terms
+
+  <Note>
+    TaskSync uses O(1) lookups for cached results. Slow searches are usually due to VS Code workspace indexing.
+  </Note>
+</Accordion>
+
+## Error Messages
+
+<Accordion title="'oldString not found in content'">
+  **Context:** Development/debugging context - not a user-facing issue
+
+  This error appears in development when the Edit tool fails to find the exact string to replace.
+
+  <Note>
+    This is a development-time error, not something TaskSync users will encounter during normal operation.
+  </Note>
+</Accordion>
+
+<Accordion title="'Session terminated'">
+  **Symptoms:** Message appears in chat indicating session ended
+
+  **Causes:**
+  - Max consecutive auto-responses reached
+  - Response timeout triggered with Autopilot disabled
+  - Manual termination by agent
+
+  **Solutions:**
+  1. Start a new session:
+     - Click "New Session" button
+  2. Adjust settings to prevent premature termination:
+     ```json
+     {
+       "tasksync.maxConsecutiveAutoResponses": 10,
+       "tasksync.responseTimeout": "120"
+     }
+     ```
+  3. Enable Autopilot for continuous operation
+
+  <Warning>
+    Session termination is a safety mechanism to prevent infinite loops. Review your timeout and max auto-response settings.
+  </Warning>
+</Accordion>
+
+<Accordion title="'Port already in use'">
+  **Symptoms:** MCP server fails to start with port conflict error
+
+  **Solutions:**
+  1. Find process using the port:
+     ```bash
+     # Linux/macOS
+     lsof -i :3579
+     kill -9 <PID>
+     
+     # Windows
+     netstat -ano | findstr :3579
+     taskkill /PID <PID> /F
+     ```
+  2. Use dynamic port assignment:
+     ```json
+     "tasksync.mcpPort": 0
+     ```
+  3. Choose a different fixed port:
+     ```json
+     "tasksync.mcpPort": 3580
+     ```
+
+  <Tip>
+    Port 0 tells TaskSync to automatically find an available port. This is the safest option if you experience frequent port conflicts.
+  </Tip>
+</Accordion>
+
+## Getting Help
+
+If you continue to experience issues:
+
+<Steps>
+  <Step title="Check Output panel">
+    View → Output → Select "TaskSync" from dropdown
+    
+    Look for error messages or warnings that provide more context.
+  </Step>
+  <Step title="Enable Developer Tools">
+    Help → Toggle Developer Tools
+    
+    Check Console tab for JavaScript errors in the webview.
+  </Step>
+  <Step title="Review GitHub Discussions">
+    Visit [GitHub Discussions](https://github.com/4regab/TaskSync/discussions)
+    
+    Search for similar issues or ask the community.
+  </Step>
+  <Step title="Report an issue">
+    If you've found a bug, report it on [GitHub Issues](https://github.com/4regab/TaskSync/issues)
+    
+    Include:
+    - VS Code version
+    - TaskSync version
+    - Reproduction steps
+    - Error messages from Output panel
+    - Developer Tools console errors
+  </Step>
+</Steps>
+
+<Warning>
+  **GitHub Acceptable Use Policy:**
+  
+  Be mindful of GitHub's terms of service. Avoid excessive automated activity that places undue burden on GitHub's infrastructure.
+  
+  Review:
+  - [GitHub Acceptable Use Policies](https://docs.github.com/site-policy/acceptable-use-policies/github-acceptable-use-policies)
+  - [GitHub Copilot Terms](https://docs.github.com/site-policy/github-terms/github-terms-for-additional-products-and-features#github-copilot)
+  
+  Use TaskSync responsibly and at your own risk.
+</Warning>

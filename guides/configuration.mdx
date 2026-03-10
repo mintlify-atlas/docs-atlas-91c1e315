@@ -1,0 +1,324 @@
+---
+title: Configuration
+description: Complete guide to TaskSync configuration options and settings
+---
+
+TaskSync provides extensive configuration options to customize your workflow. All settings can be accessed through VS Code's Settings UI or by editing your `settings.json` file directly.
+
+## Accessing Settings
+
+<Tabs>
+  <Tab title="Settings Modal">
+    Click the gear icon in the TaskSync sidebar title bar to open the in-sidebar Settings Modal for quick access to common settings.
+  </Tab>
+  <Tab title="VS Code Settings">
+    Open VS Code Settings (`Ctrl+,` or `Cmd+,`) and search for "TaskSync" to see all available options.
+  </Tab>
+  <Tab title="settings.json">
+    Add TaskSync settings directly to your `settings.json` file:
+    ```json
+    {
+      "tasksync.autopilot": true,
+      "tasksync.mcpEnabled": false
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## MCP Server Settings
+
+Configure the built-in Model Context Protocol server for external IDE integration.
+
+<Accordion title="tasksync.mcpEnabled">
+  **Type:** `boolean`  
+  **Default:** `false`
+
+  Always start MCP server on activation. Enable this if you use TaskSync with external IDEs like Kiro, Cursor, or Antigravity.
+
+  ```json
+  "tasksync.mcpEnabled": true
+  ```
+</Accordion>
+
+<Accordion title="tasksync.mcpAutoStartIfClients">
+  **Type:** `boolean`  
+  **Default:** `true`
+
+  Automatically start MCP server if external client configurations are detected (Kiro, Cursor, Antigravity).
+
+  ```json
+  "tasksync.mcpAutoStartIfClients": true
+  ```
+</Accordion>
+
+<Accordion title="tasksync.mcpPort">
+  **Type:** `number`  
+  **Default:** `3579`
+
+  Fixed port for the MCP server. Set to `0` for dynamic port assignment.
+
+  ```json
+  "tasksync.mcpPort": 3579
+  ```
+</Accordion>
+
+<Accordion title="tasksync.autoRegisterMcp">
+  **Type:** `boolean`  
+  **Default:** `true`
+
+  Automatically register MCP server with Kiro and other supported clients.
+
+  ```json
+  "tasksync.autoRegisterMcp": true
+  ```
+</Accordion>
+
+## Autopilot Settings
+
+Autopilot mode allows agents to work autonomously by automatically responding to `ask_user` prompts.
+
+<Accordion title="tasksync.autopilot">
+  **Type:** `boolean`  
+  **Default:** `false`  
+  **Scope:** `window`
+
+  Enable Autopilot to automatically respond to `ask_user` prompts without waiting for your input. Queued prompts always take priority over Autopilot responses.
+
+  ```json
+  "tasksync.autopilot": false
+  ```
+
+  <Tip>
+    Toggle Autopilot quickly using the button beside the send button in the TaskSync sidebar.
+  </Tip>
+</Accordion>
+
+<Accordion title="tasksync.autopilotText">
+  **Type:** `string`  
+  **Default:** `"You are temporarily in autonomous mode and must now make your own decision. If another question arises, be sure to ask it, as autonomous mode is temporary."`  
+  **Scope:** `window`
+
+  Text returned when Autopilot is enabled. The agent receives this as an automatic response.
+
+  ```json
+  "tasksync.autopilotText": "Continue with your best judgment."
+  ```
+</Accordion>
+
+<Accordion title="tasksync.autopilotPrompts">
+  **Type:** `array`  
+  **Default:** `[]`  
+  **Scope:** `window`
+
+  Array of prompts that cycle in order during Autopilot (1→2→3→1...). Each prompt is sent sequentially with human-like delay. When empty, falls back to `autopilotText`.
+
+  ```json
+  "tasksync.autopilotPrompts": [
+    "Continue with the next task",
+    "Proceed with implementation",
+    "Keep going"
+  ]
+  ```
+
+  <Note>
+    You can add, edit, delete, and drag-to-reorder prompts in the Settings modal. Index resets on new session.
+  </Note>
+</Accordion>
+
+## Timeout & Session Management
+
+Control automatic responses and session health.
+
+<Accordion title="tasksync.responseTimeout">
+  **Type:** `string` (enum)  
+  **Default:** `"60"`  
+  **Scope:** `window`
+
+  Auto-respond to pending tool calls if user doesn't respond within this time (in minutes). When Autopilot is enabled, the Autopilot text is sent. When disabled, a session termination message is sent.
+
+  **Available options:**
+  - `"0"` - Disabled (no auto-response)
+  - `"5"` - 5 minutes
+  - `"10"` - 10 minutes
+  - `"20"` - 20 minutes
+  - `"30"` - 30 minutes
+  - `"40"` - 40 minutes
+  - `"50"` - 50 minutes
+  - `"60"` - 60 minutes (default)
+  - `"70"` - 70 minutes
+  - `"80"` - 80 minutes
+  - `"90"` - 90 minutes (1.5 hours)
+  - `"100"` - 100 minutes
+  - `"110"` - 110 minutes
+  - `"120"` - 120 minutes (2 hours)
+  - `"150"` - 150 minutes (2.5 hours)
+  - `"180"` - 180 minutes (3 hours)
+  - `"210"` - 210 minutes (3.5 hours)
+  - `"240"` - 240 minutes (4 hours)
+
+  ```json
+  "tasksync.responseTimeout": "60"
+  ```
+</Accordion>
+
+<Accordion title="tasksync.sessionWarningHours">
+  **Type:** `number`  
+  **Default:** `2`  
+  **Range:** `0..8`  
+  **Scope:** `window`
+
+  Show a one-time warning after this many hours in the same session. Set to `0` to disable session warning.
+
+  ```json
+  "tasksync.sessionWarningHours": 2
+  ```
+
+  <Warning>
+    Sessions beyond 2 hours may produce lower-quality results. TaskSync will warn you when it's time to consider starting a fresh session.
+  </Warning>
+</Accordion>
+
+<Accordion title="tasksync.maxConsecutiveAutoResponses">
+  **Type:** `number`  
+  **Default:** `5`  
+  **Range:** `1..50`  
+  **Scope:** `window`
+
+  Maximum consecutive auto-responses (from timeout) before terminating session. Prevents infinite loops.
+
+  ```json
+  "tasksync.maxConsecutiveAutoResponses": 5
+  ```
+</Accordion>
+
+## Human-Like Delay
+
+Simulate natural interaction timing for more realistic workflows.
+
+<Accordion title="tasksync.humanLikeDelay">
+  **Type:** `boolean`  
+  **Default:** `true`  
+  **Scope:** `window`
+
+  Add random human-like delays before auto-responses (Autopilot, Queue, Timeout). Simulates natural reading and typing time.
+
+  ```json
+  "tasksync.humanLikeDelay": true
+  ```
+</Accordion>
+
+<Accordion title="tasksync.humanLikeDelayMin">
+  **Type:** `number`  
+  **Default:** `2`  
+  **Range:** `1..30` seconds  
+  **Scope:** `window`
+
+  Minimum delay in seconds before auto-responses when human-like delay is enabled.
+
+  ```json
+  "tasksync.humanLikeDelayMin": 2
+  ```
+</Accordion>
+
+<Accordion title="tasksync.humanLikeDelayMax">
+  **Type:** `number`  
+  **Default:** `6`  
+  **Range:** `2..60` seconds  
+  **Scope:** `window`
+
+  Maximum delay in seconds before auto-responses when human-like delay is enabled.
+
+  ```json
+  "tasksync.humanLikeDelayMax": 6
+  ```
+</Accordion>
+
+## UI & Interaction
+
+Customize the TaskSync user interface and interaction behavior.
+
+<Accordion title="tasksync.notificationSound">
+  **Type:** `boolean`  
+  **Default:** `true`
+
+  Play a notification sound when the AI triggers the `ask_user` tool.
+
+  ```json
+  "tasksync.notificationSound": true
+  ```
+</Accordion>
+
+<Accordion title="tasksync.interactiveApproval">
+  **Type:** `boolean`  
+  **Default:** `true`
+
+  Show interactive approval and choice buttons for Yes/No questions and multiple choice options.
+
+  ```json
+  "tasksync.interactiveApproval": true
+  ```
+</Accordion>
+
+<Accordion title="tasksync.sendWithCtrlEnter">
+  **Type:** `boolean`  
+  **Default:** `false`  
+  **Scope:** `window`
+
+  Use `Ctrl+Enter` (`Cmd+Enter` on macOS) to send messages instead of `Enter`.
+
+  ```json
+  "tasksync.sendWithCtrlEnter": false
+  ```
+
+  <Tip>
+    Enable this if you prefer multi-line input without sending on Enter.
+  </Tip>
+</Accordion>
+
+## Reusable Prompts
+
+Create saved prompts accessible via `/slash` commands.
+
+<Accordion title="tasksync.reusablePrompts">
+  **Type:** `array`  
+  **Default:** `[]`
+
+  Saved reusable prompts accessible via `/slash` commands. Each prompt has a `name` (used with `/` command) and `prompt` (the full text).
+
+  ```json
+  "tasksync.reusablePrompts": [
+    {
+      "name": "review",
+      "prompt": "Please review this code for potential issues and suggest improvements."
+    },
+    {
+      "name": "test",
+      "prompt": "Write comprehensive unit tests for this function."
+    }
+  ]
+  ```
+
+  <Note>
+    Type `/` in the input field to see autocomplete suggestions for your saved prompts.
+  </Note>
+</Accordion>
+
+## Workspace-Scoped Storage
+
+TaskSync uses workspace-scoped storage for queue, history, and settings to prevent cross-project contamination.
+
+<Note>
+  Queue, history, and settings are stored per-workspace using workspace-scoped storage with fallback to global. This means each project maintains its own isolated state.
+</Note>
+
+## VS Code Copilot Recommendations
+
+For optimal agent mode operation with VS Code Copilot:
+
+```json
+"chat.agent.maxRequests": 999
+```
+
+<Warning>
+  Enable "Auto Approve" in VS Code settings for uninterrupted agent operation. Sessions beyond 2 hours may produce lower-quality results.
+</Warning>

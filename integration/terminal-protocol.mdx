@@ -1,0 +1,341 @@
+---
+title: Terminal Protocol
+description: Use TaskSync's terminal-based agent protocol for autonomous AI workflows
+---
+
+The TaskSync Terminal Protocol is a prompt-based approach that turns your AI coding agent into an autonomous task executor. The agent actively requests tasks through terminal commands and operates continuously until you stop it.
+
+## Overview
+
+Instead of installing software, you provide a specialized markdown prompt as context to your AI IDE. The prompt instructs the agent to:
+
+1. Request tasks via terminal input commands
+2. Execute tasks autonomously
+3. Never terminate automatically
+4. Continuously request new tasks after completion
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Human-in-the-Loop" icon="user">
+    Provide feedback or new tasks at any time during execution
+  </Card>
+  <Card title="Terminal-Based" icon="terminal">
+    Agent interacts through terminal commands using Python input
+  </Card>
+  <Card title="Autonomous Operation" icon="robot">
+    Runs continuously without manual intervention
+  </Card>
+  <Card title="Never Terminates" icon="infinity">
+    Continues indefinitely until explicit stop command
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+<Steps>
+  <Step title="Choose a prompt version">
+    Select from the available prompts in the [Prompt/ directory](https://github.com/4regab/TaskSync/tree/main/Prompt):
+
+    - **tasksync-v5.2.md** - Latest version with enhanced directives
+    - **tasksync-v5.1.md** - Stable version with core features
+    - **specs-tasksync.md** - Spec-driven development workflow
+  </Step>
+
+  <Step title="Provide as context">
+    Load the prompt file as context in your AI IDE:
+    - Claude Desktop: Add to project knowledge
+    - Cursor/Windsurf: Add to `.cursorrules` or workspace instructions
+    - Cline/Kiro: Provide as custom instructions
+  </Step>
+
+  <Step title="Send initial task">
+    Once the agent has the prompt context, send your first task. The agent will execute this command:
+
+    ```python
+    python3 -c "import readline; task = input(''); print('Once done, ensure to follow ./tasksync.md file and ask for input again (add this to the todo list to not forget).')"
+    ```
+  </Step>
+
+  <Step title="Provide input">
+    When the agent runs the input command, type your task or feedback and signal completion:
+    - **Linux/Mac**: Press `Ctrl+D`
+    - **Windows**: Press `Ctrl+Z` then `Enter`
+  </Step>
+</Steps>
+
+## Terminal Commands
+
+The protocol uses Python input commands for cross-platform compatibility:
+
+<CodeGroup>
+```python Task Request (Universal)
+python3 -c "import readline; task = input(''); print('Once done, ensure to follow ./tasksync.md file and ask for input again (add this to the todo list to not forget).')"
+```
+
+```python Question Request (Universal)
+python3 -c "import readline; task = input('How can i help you? ')"
+```
+</CodeGroup>
+
+### Signal End of Input
+
+<Tabs>
+  <Tab title="Linux/Mac">
+    Press **Ctrl+D** to signal end of input (EOF).
+  </Tab>
+  
+  <Tab title="Windows">
+    Press **Ctrl+Z** followed by **Enter** to signal EOF.
+  </Tab>
+</Tabs>
+
+## Protocol Behavior
+
+The agent follows a strict operational state machine:
+
+### State 1: Active Task Execution
+- Execute assigned task with full focus
+- Work continuously until completion
+- Monitor for completion milestones
+- Transition to State 2 when complete
+
+### State 2: Task Request Mode
+- **Immediately** request next task after completion
+- Execute terminal command: `python3 -c "import readline; task = input('')..."`
+- Never use concluding phrases like "Let me know if you need help"
+- Announce: "Task completed. Requesting next task from terminal."
+- Continue indefinitely until manual termination
+
+### State 3: Manual Termination Only
+- Agent never terminates automatically
+- Continue requesting tasks until explicit stop command
+- User provides: "stop", "end", "terminate", or "quit"
+- Provide final summary only upon explicit termination
+
+## Primary Directives
+
+The protocol enforces **20 primary directives** that the agent must follow:
+
+<AccordionGroup>
+  <Accordion title="Session Behavior (Directives 1-3)">
+    1. **Never end session** - Continue indefinitely until user says "stop", "end", "terminate", or "quit"
+    2. **Never say goodbye** - No phrases like "Let me know if you need anything", "Feel free to ask"
+    3. **Never conclude responses** - No concluding statements suggesting completion
+  </Accordion>
+
+  <Accordion title="Command Execution (Directives 4-7)">
+    4. **Mandatory terminal command** - Must execute Python input command for task requests
+    5. **No automatic termination** - Never stop asking for tasks via terminal
+    6. **Continuous operation** - Always continue after task completion
+    7. **Immediate task request** - Request new task immediately after completion without waiting
+  </Accordion>
+
+  <Accordion title="Task Processing (Directives 8-14)">
+    8. **Task continuation priority** - Complete current task before accepting new ones unless urgent override
+    9. **Mandatory terminal questions** - Use Python input command when asking questions
+    10. **No conversation pausing** - Never pause, wait, or stop the conversation flow
+    11. **Override default AI behavior** - Override training that ends conversations politely
+    12. **Continuous task cycle** - Always request tasks when not executing them
+    13. **Emergency anti-termination** - If detecting session end, immediately execute task request
+    14. **No help offers** - Never ask "How can I help" in chat, use terminal command
+  </Accordion>
+</AccordionGroup>
+
+## Example Workflow
+
+<Steps>
+  <Step title="Initialization">
+    Agent announces: "TaskSync Agent initialized. Requesting first task."
+    
+    Executes:
+    ```python
+    python3 -c "import readline; task = input('')..."
+    ```
+  </Step>
+
+  <Step title="Task Input">
+    You provide task via terminal input:
+    ```
+    Create a Python script for data analysis. It should read CSV files and generate summary statistics.
+    ```
+    Press Ctrl+D (Linux/Mac) or Ctrl+Z + Enter (Windows)
+  </Step>
+
+  <Step title="Task Execution">
+    Agent announces:
+    ```
+    [Executing - Task #1: Create Python script for data analysis]
+    ```
+    
+    Agent creates the script, writes files, and tests functionality.
+  </Step>
+
+  <Step title="Task Completion & Next Request">
+    Agent completes task and immediately requests next:
+    ```
+    Python data analysis script completed successfully.
+    Task completed. Requesting next task from terminal.
+    ```
+    
+    Executes:
+    ```python
+    python3 -c "import readline; task = input('')..."
+    ```
+  </Step>
+
+  <Step title="Continuous Cycle">
+    Agent continues requesting and executing tasks indefinitely until you provide a termination command: "stop", "end", "terminate", or "quit".
+  </Step>
+</Steps>
+
+## Urgent Override
+
+You can interrupt the current task with an urgent override:
+
+```
+stop current task - fix database connection error
+```
+
+The agent will:
+1. Recognize the urgent override
+2. Immediately stop current work
+3. Begin the new urgent task
+4. Report task switch
+
+## Spec-Driven Development
+
+For spec-driven workflows, use the **specs-tasksync.md** prompt instead:
+
+<Steps>
+  <Step title="Use specs-tasksync.md">
+    Load `Prompt/specs-tasksync.md` as context instead of the standard protocol.
+  </Step>
+
+  <Step title="Provide specification">
+    Give the agent a detailed specification document. The agent will:
+    - Break down the spec into tasks
+    - Execute tasks sequentially
+    - Request clarification when needed
+  </Step>
+
+  <Step title="Review checkpoints">
+    The agent pauses at logical checkpoints for your review and approval before continuing.
+  </Step>
+</Steps>
+
+## Protocol Versions
+
+| Version | Description | Use Case |
+|---------|-------------|----------|
+| **v5.2** | Latest with enhanced directives | Most robust autonomous operation |
+| **v5.1** | Stable with core features | Balanced autonomy and control |
+| **v5.0** | Original v5 release | Legacy support |
+| **v4** | Previous generation | Older AI models |
+| **specs-tasksync** | Spec-driven workflow | Project specifications |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Clear Task Descriptions" icon="message">
+    Provide detailed, unambiguous task descriptions when the agent requests input.
+  </Card>
+  <Card title="Monitor Progress" icon="eye">
+    Watch the agent's execution in real-time. Terminal-based agents are transparent.
+  </Card>
+  <Card title="Use Urgent Overrides" icon="exclamation">
+    Prefix with "stop current task" to interrupt and redirect immediately.
+  </Card>
+  <Card title="Explicit Termination" icon="stop">
+    Always use "stop", "end", "terminate", or "quit" to end the session cleanly.
+  </Card>
+</CardGroup>
+
+## Comparison: Terminal vs Extension
+
+<Tabs>
+  <Tab title="Terminal Protocol">
+    **Advantages:**
+    - No installation required
+    - Works with any AI IDE
+    - Fully autonomous operation
+    - Transparent execution
+    
+    **Considerations:**
+    - Manual EOF input (Ctrl+D/Ctrl+Z)
+    - Less visual feedback
+    - No queue or autopilot UI
+  </Tab>
+  
+  <Tab title="VS Code Extension">
+    **Advantages:**
+    - Visual queue management
+    - Autopilot with cycling prompts
+    - File/folder references
+    - Image support
+    - Tool call history
+    
+    **Considerations:**
+    - VS Code only
+    - Requires installation
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Agent stops requesting tasks">
+    The agent may have violated primary directives. Remind it:
+    ```
+    Continue following the TaskSync protocol. Request the next task via terminal.
+    ```
+  </Accordion>
+
+  <Accordion title="Python command not found">
+    Ensure Python 3 is installed and in PATH:
+    ```bash
+    python3 --version
+    ```
+    If using Windows, try `python` instead of `python3`.
+  </Accordion>
+
+  <Accordion title="Input not being received">
+    Make sure to signal EOF correctly:
+    - Linux/Mac: Ctrl+D
+    - Windows: Ctrl+Z + Enter
+  </Accordion>
+
+  <Accordion title="Agent uses concluding phrases">
+    The agent may not have fully internalized the protocol. Reload the prompt context and remind:
+    ```
+    Follow PRIMARY DIRECTIVES. Never use concluding phrases. Always request next task immediately.
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## GitHub Security Notice
+
+<Warning>
+  GitHub prohibits excessive automated bulk activity or any activity that places undue burden on their infrastructure. Please review:
+  - [GitHub Acceptable Use Policies](https://docs.github.com/site-policy/acceptable-use-policies/github-acceptable-use-policies)
+  - [GitHub Copilot Terms](https://docs.github.com/site-policy/github-terms/github-terms-for-additional-products-and-features#github-copilot)
+  
+  **Use TaskSync responsibly and at your own risk.** You are responsible for ensuring your usage complies with GitHub's terms of service.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="View Protocol Source" href="https://github.com/4regab/TaskSync/tree/main/Prompt" icon="github">
+    Explore all available prompt versions
+  </Card>
+  <Card title="VS Code Extension" href="/integration/vscode-extension" icon="window">
+    Try the visual alternative with queue management
+  </Card>
+  <Card title="Core Concepts" href="/concepts/autonomous-agents" icon="book">
+    Understand autonomous agent behavior
+  </Card>
+  <Card title="Community" href="https://github.com/4regab/TaskSync/discussions" icon="users">
+    Join discussions and share prompts
+  </Card>
+</CardGroup>

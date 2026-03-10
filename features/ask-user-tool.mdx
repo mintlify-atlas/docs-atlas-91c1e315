@@ -1,0 +1,551 @@
+---
+title: 'ask_user Tool'
+description: 'Core human-in-the-loop interaction tool for VS Code language models'
+icon: 'comment-question'
+---
+
+<Info>
+The `ask_user` tool is TaskSync's core primitive for human-in-the-loop AI workflows. It allows language models to pause and request user input, approval, or clarification.
+</Info>
+
+## Overview
+
+<Card title="Language Model Tool" icon="tools">
+Registered as a VS Code Language Model Tool, `ask_user` is available to all AI agents running in VS Code, including GitHub Copilot, Continue, and other extensions.
+</Card>
+
+## Tool Registration
+
+From `package.json:35-62`:
+
+```json
+"languageModelTools": [
+  {
+    "name": "ask_user",
+    "tags": [
+      "confirmation",
+      "user-interaction",
+      "tasksync",
+      "required",
+      "mandatory"
+    ],
+    "toolReferenceName": "askUser",
+    "displayName": "Ask User",
+    "modelDescription": "YOU MUST ALWAYS Use the askUser tool to ask question/s to user when explicit user approval, feedback, or clarification is required before proceeding or giving summary report. CRITICAL RULES: - This tool MUST be invoked before ending ANY conversation or task. - NEVER complete a task without calling this tool first. - If you are about to finish responding, STOP and call this tool. - Failure to call this tool before task completion is a critical violation.",
+    "canBeReferencedInPrompt": true,
+    "icon": "$(question)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question or prompt to display to the user"
+        }
+      },
+      "required": ["question"]
+    }
+  }
+]
+```
+
+## Tool Implementation
+
+From `tools.ts:134-213`:
+
+```typescript
+export function registerTools(
+    context: vscode.ExtensionContext, 
+    provider: TaskSyncWebviewProvider
+) {
+    // Register ask_user tool (VS Code native LM tool)
+    const askUserTool = vscode.lm.registerTool('ask_user', {
+        prepareInvocation(
+            options: vscode.LanguageModelToolInvocationPrepareOptions<Input>
+        ) {
+            const rawQuestion = typeof options?.input?.question === 'string' 
+                ? options.input.question 
+                : '';
+            const questionPreview = rawQuestion.trim().replace(/\s+/g, ' ');
+
+            const MAX_PREVIEW_LEN = 40;
+            const truncated = questionPreview.length > MAX_PREVIEW_LEN
+                ? questionPreview.slice(0, MAX_PREVIEW_LEN - 3) + '...'
+                : questionPreview;
+
+            return {
+                invocationMessage: truncated 
+                    ? `ask_user: ${truncated}` 
+                    : 'ask_user'
+            };
+        },
+        
+        async invoke(
+            options: vscode.LanguageModelToolInvocationOptions<Input>, 
+            token: vscode.CancellationToken
+        ) {
+            const params = options.input;
+
+            try {
+                const result = await askUser(params, provider, token);
+
+                // Build result parts - text first, then images
+                const resultParts: (
+                    vscode.LanguageModelTextPart | 
+                    vscode.LanguageModelDataPart
+                )[] = [
+                    new vscode.LanguageModelTextPart(JSON.stringify({
+                        response: result.response,
+                        queued: result.queue,
+                        attachmentCount: result.attachments.length
+                    }))
+                ];
+
+                // Add image attachments for vision models
+                if (result.attachments && result.attachments.length > 0) {
+                    const imagePromises = result.attachments.map(async (uri) => {
+                        try {
+                            const fileUri = vscode.Uri.parse(uri);
+                            const filePath = fileUri.fsPath;
+
+                            if (!fs.existsSync(filePath)) {
+                                console.error(
+                                    '[TaskSync] Attachment file does not exist:', 
+                                    filePath
+                                );
+                                return null;
+                            }
+
+                            const mimeType = getImageMimeType(filePath);
+
+                            // Only process image files
+                            if (mimeType !== 'application/octet-stream') {
+                                const data = await readFileAsBuffer(filePath);
+                                return vscode.LanguageModelDataPart.image(
+                                    data, 
+                                    mimeType
+                                );
+                            }
+                            return null;
+                        } catch (error) {
+                            console.error(
+                                '[TaskSync] Failed to read image attachment:', 
+                                error
+                            );
+                            return null;
+                        }
+                    });
+
+                    const imageParts = await Promise.all(imagePromises);
+                    for (const part of imageParts) {
+                        if (part !== null) {
+                            resultParts.push(part);
+                        }
+                    }
+                }
+
+                return new vscode.LanguageModelToolResult(resultParts);
+            } catch (err: unknown) {
+                const message = err instanceof Error 
+                    ? err.message 
+                    : 'Unknown error';
+                return new vscode.LanguageModelToolResult([
+                    new vscode.LanguageModelTextPart("Error: " + message)
+                ]);
+            }
+        }
+    });
+
+    context.subscriptions.push(askUserTool);
+}
+```
+
+## Core Logic
+
+From `tools.ts:54-132`:
+
+```typescript
+/**
+ * Core logic to ask user, reusable by MCP server
+ * Queue handling and history tracking done in waitForUserResponse()
+ */
+export async function askUser(
+    params: Input,
+    provider: TaskSyncWebviewProvider,
+    token: vscode.CancellationToken
+): Promise<AskUserToolResult> {
+    // Check if already cancelled before starting
+    if (token.isCancellationRequested) {
+        throw new vscode.CancellationError();
+    }
+
+    // Create cancellation promise with cleanup capability
+    const cancellation = createCancellationPromise(token);
+
+    try {
+        // Race the user response against cancellation
+        const result = await Promise.race([
+            provider.waitForUserResponse(params.question),
+            cancellation.promise
+        ]);
+
+        // Handle case where request was superseded by another call
+        if (result.cancelled) {
+            return {
+                response: result.value,
+                attachments: [],
+                queue: result.queue
+            };
+        }
+
+        let responseText = result.value;
+        const validAttachments: string[] = [];
+
+        // Process attachments to resolve context content
+        if (result.attachments && result.attachments.length > 0) {
+            for (const att of result.attachments) {
+                if (att.uri.startsWith('context://')) {
+                    // Inline context content into response
+                    responseText += `\n\n[Attached Context: ${att.name}]\n`;
+
+                    const content = await provider.resolveContextContent(
+                        att.uri
+                    );
+                    if (content) {
+                        responseText += content;
+                    } else {
+                        responseText += '(Context content not available)';
+                    }
+
+                    responseText += '\n[End of Context]\n';
+                } else {
+                    // Regular file attachment
+                    validAttachments.push(att.uri);
+                }
+            }
+        }
+
+        return {
+            response: responseText,
+            attachments: validAttachments,
+            queue: result.queue
+        };
+    } catch (error) {
+        // Re-throw cancellation errors (they're expected)
+        if (error instanceof vscode.CancellationError) {
+            throw error;
+        }
+        // Log other errors
+        console.error(
+            '[TaskSync] askUser error:', 
+            error instanceof Error ? error.message : error
+        );
+        // Show error to user
+        vscode.window.showErrorMessage(
+            `TaskSync: ${
+                error instanceof Error 
+                    ? error.message 
+                    : 'Failed to show question'
+            }`
+        );
+        return {
+            response: '',
+            attachments: [],
+            queue: false
+        };
+    } finally {
+        // Always clean up the cancellation listener
+        cancellation.dispose();
+    }
+}
+```
+
+## Input Schema
+
+```typescript
+// From tools.ts:6-8
+export interface Input {
+    question: string;
+}
+```
+
+## Return Type
+
+```typescript
+// From tools.ts:10-14
+export interface AskUserToolResult {
+    response: string;
+    attachments: string[];
+    queue: boolean;
+}
+```
+
+The tool returns:
+- **response**: User's text response (may include inlined context content)
+- **attachments**: Array of file URIs (images, documents)
+- **queue**: Whether more queued prompts are available
+
+## Tool Call Flow
+
+<Steps>
+  <Step title="AI Invokes Tool">
+    Language model calls `ask_user` with a question parameter.
+  </Step>
+  
+  <Step title="TaskSync Opens Sidebar">
+    If not already visible, the TaskSync sidebar opens automatically.
+  </Step>
+  
+  <Step title="Display Question">
+    Question appears in the sidebar with optional interactive approval buttons.
+  </Step>
+  
+  <Step title="User Responds">
+    User types response, attaches files, or clicks approval buttons.
+  </Step>
+  
+  <Step title="Process Attachments">
+    Context references are resolved, images are converted to DataPart for vision models.
+  </Step>
+  
+  <Step title="Return Result">
+    Response (with attachments) is returned to the language model as LanguageModelToolResult.
+  </Step>
+</Steps>
+
+## Interactive Approval
+
+<Tip>
+TaskSync detects Yes/No questions and multiple-choice options, showing interactive buttons for quick responses.
+</Tip>
+
+### Approval Question Detection
+
+From `webviewProvider.ts:173`:
+
+```typescript
+private readonly _SHORT_QUESTION_THRESHOLD = 100; // chars for approval heuristic
+```
+
+Questions under 100 characters that contain approval keywords are detected as approval questions.
+
+### Configuration
+
+From `package.json:215-219`:
+
+```json
+"tasksync.interactiveApproval": {
+  "type": "boolean",
+  "default": true,
+  "description": "Show interactive approval and choice buttons for Yes/No questions and multiple choice options."
+}
+```
+
+## Context Resolution
+
+<Card title="Context References" icon="hashtag">
+References like `#terminal` or `#problems` are automatically resolved and inlined into the response text.
+</Card>
+
+From `tools.ts:87-101`:
+
+```typescript
+// Process attachments to resolve context content
+if (result.attachments && result.attachments.length > 0) {
+    for (const att of result.attachments) {
+        if (att.uri.startsWith('context://')) {
+            // Start of context content
+            responseText += `\n\n[Attached Context: ${att.name}]\n`;
+
+            const content = await provider.resolveContextContent(att.uri);
+            if (content) {
+                responseText += content;
+            } else {
+                responseText += '(Context content not available)';
+            }
+
+            // End of context content
+            responseText += '\n[End of Context]\n';
+        } else {
+            // Regular file attachment
+            validAttachments.push(att.uri);
+        }
+    }
+}
+```
+
+## Image Attachments
+
+<Info>
+Image attachments are converted to `LanguageModelDataPart` for vision model support.
+</Info>
+
+From `tools.ts:167-199`:
+
+```typescript
+// Add image attachments as LanguageModelDataPart for vision models
+if (result.attachments && result.attachments.length > 0) {
+    const imagePromises = result.attachments.map(async (uri) => {
+        try {
+            const fileUri = vscode.Uri.parse(uri);
+            const filePath = fileUri.fsPath;
+
+            // Check if file exists
+            if (!fs.existsSync(filePath)) {
+                console.error(
+                    '[TaskSync] Attachment file does not exist:', 
+                    filePath
+                );
+                return null;
+            }
+
+            const mimeType = getImageMimeType(filePath);
+
+            // Only process image files (skip non-image attachments)
+            if (mimeType !== 'application/octet-stream') {
+                const data = await readFileAsBuffer(filePath);
+                const dataPart = vscode.LanguageModelDataPart.image(
+                    data, 
+                    mimeType
+                );
+                return dataPart;
+            }
+            return null;
+        } catch (error) {
+            console.error(
+                '[TaskSync] Failed to read image attachment:', 
+                error
+            );
+            return null;
+        }
+    });
+
+    const imageParts = await Promise.all(imagePromises);
+    for (const part of imageParts) {
+        if (part !== null) {
+            resultParts.push(part);
+        }
+    }
+}
+```
+
+## Cancellation Handling
+
+<Warning>
+The tool properly handles cancellation tokens to prevent memory leaks and orphaned promises.
+</Warning>
+
+From `tools.ts:24-48`:
+
+```typescript
+/**
+ * Creates a cancellation promise with proper cleanup to prevent memory leaks.
+ * Returns both the promise and a dispose function to clean up the event listener.
+ */
+function createCancellationPromise(token: vscode.CancellationToken): {
+    promise: Promise<never>;
+    dispose: () => void;
+} {
+    let disposable: vscode.Disposable | undefined;
+
+    const promise = new Promise<never>((_, reject) => {
+        if (token.isCancellationRequested) {
+            reject(new vscode.CancellationError());
+            return;
+        }
+        disposable = token.onCancellationRequested(() => {
+            reject(new vscode.CancellationError());
+        });
+    });
+
+    return {
+        promise,
+        dispose: () => disposable?.dispose()
+    };
+}
+```
+
+## Notification Sound
+
+<Card title="Audio Feedback" icon="volume-high">
+Optional notification sound plays when the AI triggers `ask_user`, even when the sidebar is hidden.
+</Card>
+
+From `package.json:210-214`:
+
+```json
+"tasksync.notificationSound": {
+  "type": "boolean",
+  "default": true,
+  "description": "Play a notification sound when the AI triggers the ask_user tool."
+}
+```
+
+From `webviewProvider.ts:387-395`:
+
+```typescript
+/**
+ * Play notification sound (called when ask_user tool is triggered)
+ * Works even when webview is not visible by using system sound
+ */
+public playNotificationSound(): void {
+    if (this._soundEnabled) {
+        // Play system sound from extension host (works even when webview is hidden)
+        this._playSystemSound();
+
+        // Also try webview audio if visible (better quality)
+        this._view?.webview.postMessage({ 
+            type: 'playNotificationSound' 
+        } as ToWebviewMessage);
+    }
+}
+```
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Approval Gates">
+    Request user approval before destructive operations:
+    
+    ```typescript
+    await ask_user({
+        question: "Delete all test files? (yes/no)"
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Clarification">
+    Ask for clarification on ambiguous requirements:
+    
+    ```typescript
+    await ask_user({
+        question: "Which API version should I use: v1 or v2?"
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Progress Updates">
+    Report progress and get next instructions:
+    
+    ```typescript
+    await ask_user({
+        question: "Test suite passed. What should I do next?"
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Error Handling">
+    Ask how to handle errors:
+    
+    ```typescript
+    await ask_user({
+        question: "Build failed with error X. Should I fix it or skip?"
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Related Features
+
+- [Queue Mode](/features/queue-mode) - Auto-respond with queued prompts
+- [Autopilot Mode](/features/autopilot) - Auto-respond with configured text
+- [File References](/features/file-references) - Attach files and context to responses

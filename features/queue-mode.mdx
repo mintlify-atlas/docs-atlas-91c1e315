@@ -1,0 +1,255 @@
+---
+title: 'Smart Queue Mode'
+description: 'Batch multiple prompts and let TaskSync auto-respond to ask_user tool calls in sequence'
+icon: 'layer-group'
+---
+
+<Info>
+**Smart Queue Mode** allows you to queue multiple prompts ahead of time. When the AI agent triggers the `ask_user` tool, TaskSync automatically sends the next queued prompt instead of waiting for manual input.
+</Info>
+
+## Overview
+
+<CardGroup cols={2}>
+  <Card title="Normal Mode" icon="message">
+    Each `ask_user` call waits for your manual response. You type and send each answer individually.
+  </Card>
+  <Card title="Queue Mode" icon="layer-group">
+    Pre-queue multiple prompts. TaskSync auto-responds to `ask_user` calls by sending queued prompts in order.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+1. **Toggle Queue Mode**: Click the queue toggle button in the TaskSync sidebar
+2. **Add Prompts**: Type prompts and click "Add to Queue" instead of sending immediately
+3. **Auto-Response**: When the AI triggers `ask_user`, TaskSync automatically sends the next queued prompt
+4. **Human-like Delays**: Optional random delays (2-6s) simulate natural response timing
+
+<Tip>
+Queued prompts **always take priority** over Autopilot. If both are enabled, queue prompts are sent first.
+</Tip>
+
+## Queue Management
+
+### Adding Prompts to Queue
+
+```typescript
+// From webviewProvider.ts:89
+type FromWebviewMessage =
+  | { type: 'addQueuePrompt'; prompt: string; id: string; attachments?: AttachmentInfo[] }
+  // ...
+```
+
+Prompts can include:
+- **Text**: Instructions, questions, or task descriptions
+- **Attachments**: Files, images, or folders (stored with the queued prompt)
+- **References**: Context items like `#terminal` or `#problems`
+
+### Queue Operations
+
+<Accordion title="Reorder Queue Items">
+Drag and drop prompts to reorder them. The first prompt in the list is sent first.
+
+```typescript
+// From webviewProvider.ts:92
+| { type: 'reorderQueue'; fromIndex: number; toIndex: number }
+```
+</Accordion>
+
+<Accordion title="Edit Queue Items">
+Click the edit icon on any queued prompt to modify it before it's sent.
+
+```typescript
+// From webviewProvider.ts:91
+| { type: 'editQueuePrompt'; promptId: string; newPrompt: string }
+```
+</Accordion>
+
+<Accordion title="Remove Queue Items">
+Click the trash icon to remove a prompt from the queue.
+
+```typescript
+// From webviewProvider.ts:90
+| { type: 'removeQueuePrompt'; promptId: string }
+```
+</Accordion>
+
+## Queue State Persistence
+
+<Note>
+Queue state is **persisted per workspace** and survives VS Code restarts. Queue data is stored in workspace-scoped storage and saved with a 300ms debounce.
+</Note>
+
+```typescript
+// From webviewProvider.ts:159
+private readonly _QUEUE_SAVE_DEBOUNCE_MS = 300;
+```
+
+### Storage Location
+
+Queued prompts are saved to:
+```
+~/.config/Code/User/workspaceStorage/<workspace-id>/tasksync-queue.json
+```
+
+## Queue Processing Logic
+
+```typescript
+// From webviewProvider.ts:958-996
+if (this._queueEnabled && this._promptQueue.length > 0) {
+    const queuedPrompt = this._promptQueue.shift();
+    if (queuedPrompt) {
+        this._saveQueueToDisk();
+        this._updateQueueUI();
+
+        // Random delay simulates human reading/response time
+        await this._applyHumanLikeDelay('Queue');
+
+        // Re-check after delay: user may have disabled queue
+        if (!this._queueEnabled || this._currentToolCallId !== toolCallId) {
+            // State changed — restore prompt to queue
+            this._promptQueue.unshift(queuedPrompt);
+            this._saveQueueToDisk();
+            this._updateQueueUI();
+        } else {
+            // Create completed tool call entry for queue response
+            const entry: ToolCallEntry = {
+                id: toolCallId,
+                prompt: question,
+                response: queuedPrompt.prompt,
+                timestamp: Date.now(),
+                isFromQueue: true,
+                status: 'completed'
+            };
+            this._currentSessionCalls.unshift(entry);
+            this._currentSessionCallsMap.set(entry.id, entry);
+            
+            return {
+                value: queuedPrompt.prompt,
+                queue: this._queueEnabled && this._promptQueue.length > 0,
+                attachments: queuedPrompt.attachments || []
+            };
+        }
+    }
+}
+```
+
+## Performance Limits
+
+<Warning>
+Queue prompts have a maximum length to prevent performance issues:
+</Warning>
+
+```typescript
+// From webviewProvider.ts:169
+private readonly _MAX_QUEUE_PROMPT_LENGTH = 100000; // 100KB per prompt
+```
+
+## Human-like Delays
+
+<Card title="Natural Timing" icon="clock">
+Optional random delays (2-6s by default) simulate human reading and typing time for more realistic agent workflows.
+</Card>
+
+### Configuration
+
+```json
+{
+  "tasksync.humanLikeDelay": true,
+  "tasksync.humanLikeDelayMin": 2,
+  "tasksync.humanLikeDelayMax": 6
+}
+```
+
+From `package.json:188-209`:
+
+```json
+"tasksync.humanLikeDelay": {
+  "type": "boolean",
+  "default": true,
+  "description": "Add random human-like delays before auto-responses (Autopilot, Queue, Timeout). Simulates natural reading and typing time for a more realistic workflow."
+},
+"tasksync.humanLikeDelayMin": {
+  "type": "number",
+  "default": 2,
+  "minimum": 1,
+  "maximum": 30,
+  "description": "Minimum delay in seconds before auto-responses when human-like delay is enabled."
+},
+"tasksync.humanLikeDelayMax": {
+  "type": "number",
+  "default": 6,
+  "minimum": 2,
+  "maximum": 60,
+  "description": "Maximum delay in seconds before auto-responses when human-like delay is enabled."
+}
+```
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Batch Refactoring">
+    Queue multiple file paths or refactoring instructions:
+    
+    1. "Refactor the authentication module"
+    2. "Add error handling to all async functions"
+    3. "Update tests to match new API"
+    4. "Generate documentation for changes"
+  </Tab>
+  
+  <Tab title="Sequential Tasks">
+    Break a large task into steps:
+    
+    1. "Install dependencies"
+    2. "Run the test suite"
+    3. "Fix any failing tests"
+    4. "Commit the changes"
+  </Tab>
+  
+  <Tab title="Debugging Workflow">
+    Queue debugging steps:
+    
+    1. "Check the error logs"
+    2. "Inspect the database state"
+    3. "Review the network requests"
+    4. "Test the fix"
+  </Tab>
+</Tabs>
+
+## Queue Interface
+
+```typescript
+// From webviewProvider.ts:7-12
+export interface QueuedPrompt {
+    id: string;
+    prompt: string;
+    attachments?: AttachmentInfo[];  // Optional attachments included with the prompt
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Clear Instructions" icon="memo">
+    Write explicit, self-contained prompts. The agent won't have context from previous manual interactions.
+  </Card>
+  
+  <Card title="Flexible Planning" icon="shuffle">
+    You can disable queue mode at any time to take manual control, then re-enable it later.
+  </Card>
+  
+  <Card title="Attach Context" icon="paperclip">
+    Add file references or context items to queued prompts for better AI understanding.
+  </Card>
+  
+  <Card title="Monitor Progress" icon="eye">
+    Watch the tool call history to see which queued prompts have been sent and how the agent responded.
+  </Card>
+</CardGroup>
+
+## Related Settings
+
+- [Autopilot Mode](/features/autopilot) - Autonomous operation when queue is empty
+- [Human-like Delays](#human-like-delays) - Natural timing for auto-responses
+- [Session Management](/features/session-management) - Track queue usage over time

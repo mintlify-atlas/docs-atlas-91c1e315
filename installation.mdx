@@ -1,0 +1,485 @@
+---
+title: Installation
+description: Install TaskSync using one of three integration methods
+---
+
+TaskSync offers three ways to integrate human-in-the-loop workflows into your AI-assisted development. Choose the option that best fits your workflow.
+
+## Choose Your Installation Method
+
+<CardGroup cols={3}>
+  <Card title="VS Code Extension" icon="puzzle-piece" href="#option-1-vs-code-extension">
+    **Recommended** - Full-featured sidebar with smart queue and autopilot
+  </Card>
+  
+  <Card title="Terminal Protocol" icon="terminal" href="#option-2-terminal-protocol">
+    Prompt-based agent that requests tasks via terminal commands
+  </Card>
+  
+  <Card title="MCP Server" icon="server" href="#option-3-mcp-server">
+    Model Context Protocol server for external IDEs
+  </Card>
+</CardGroup>
+
+---
+
+## Option 1: VS Code Extension
+
+<Note>
+This is the **recommended** option for most users. It provides the richest feature set including Queue Mode, Autopilot, file references, and session history.
+</Note>
+
+### System Requirements
+
+- **VS Code**: Version 1.90.0 or higher
+- **Operating System**: Windows, macOS, or Linux
+- **AI Assistant**: GitHub Copilot (or another VS Code AI extension supporting language model tools)
+
+### Installation Steps
+
+<Steps>
+  <Step title="Install from Marketplace">
+    **Option A: From VS Code**
+    
+    1. Open VS Code
+    2. Click Extensions icon in Activity Bar (`Ctrl+Shift+X` / `Cmd+Shift+X`)
+    3. Search for **"TaskSync"** by publisher **4regab**
+    4. Click **Install**
+    
+    **Option B: From Web**
+    
+    Visit the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=4regab.tasksync-chat) and click **Install**
+  </Step>
+  
+  <Step title="Build from Source (Optional)">
+    If you prefer to build from source:
+    
+    ```bash
+    cd tasksync-chat
+    npm install
+    npx vsce package
+    ```
+    
+    This creates a `.vsix` file that you can install via:
+    
+    ```bash
+    code --install-extension tasksync-chat-*.vsix
+    ```
+  </Step>
+  
+  <Step title="Verify Installation">
+    After installation:
+    
+    1. Look for the TaskSync icon in the Activity Bar (left sidebar)
+    2. Click the icon to open the TaskSync panel
+    3. You should see the input field and mode toggles
+  </Step>
+  
+  <Step title="Configure (Optional)">
+    Customize TaskSync behavior in VS Code settings:
+    
+    ```json settings.json
+    {
+      // Allow longer agent sessions
+      "chat.agent.maxRequests": 999,
+      
+      // Notification sound when agent calls ask_user
+      "tasksync.notificationSound": true,
+      
+      // Response timeout (minutes)
+      "tasksync.responseTimeout": "60",
+      
+      // Human-like delay before auto-responses
+      "tasksync.humanLikeDelay": true,
+      "tasksync.humanLikeDelayMin": 2,
+      "tasksync.humanLikeDelayMax": 6
+    }
+    ```
+  </Step>
+</Steps>
+
+### Available Commands
+
+Access these commands via Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
+
+| Command | Description |
+|---------|-------------|
+| `TaskSync: Send Message` | Send the current input (useful for keyboard shortcuts) |
+| `TaskSync: Start MCP Server` | Manually start the embedded MCP server |
+| `TaskSync: Restart MCP Server` | Restart the MCP server |
+| `TaskSync: Show MCP Configuration` | View MCP config for external IDEs |
+
+### Package Metadata
+
+The extension is published as:
+
+```json package.json
+{
+  "name": "tasksync-chat",
+  "publisher": "4regab",
+  "displayName": "TaskSync",
+  "version": "2.0.25",
+  "engines": {
+    "vscode": "^1.90.0"
+  }
+}
+```
+
+---
+
+## Option 2: Terminal Protocol
+
+<Note>
+The **Terminal Protocol** is a prompt-based approach where AI agents actively request tasks through terminal commands. This option works with any AI IDE that supports terminal interaction.
+</Note>
+
+### How It Works
+
+1. Provide the TaskSync prompt as context to your AI agent
+2. The agent executes a terminal command to request tasks
+3. You input your task or feedback via terminal
+4. Agent executes the task and repeats the cycle
+
+### Installation Steps
+
+<Steps>
+  <Step title="Choose a Protocol Version">
+    TaskSync provides multiple protocol versions in the [`Prompt/`](https://github.com/4regab/TaskSync/tree/main/Prompt) directory:
+    
+    - **tasksync-v5.2.md** - Latest terminal protocol (recommended)
+    - **tasksync-v5.1.md** - Previous version
+    - **tasksync-v5.md** - Legacy version
+    - **specs-tasksync.md** - Spec-driven development variant
+  </Step>
+  
+  <Step title="Add Prompt to AI Context">
+    Copy the contents of your chosen protocol file and provide it to your AI IDE as system instructions or context.
+    
+    For example, with Cursor or Windsurf:
+    
+    1. Open a new chat
+    2. Attach the protocol file to the conversation
+    3. Send your first message to the agent
+  </Step>
+  
+  <Step title="Agent Requests First Task">
+    The agent will execute a terminal command to request input:
+    
+    ```bash
+    python3 -c "import readline; task = input(''); print('Once done, ensure to follow ./tasksync.md file and ask for input again (add this to the todo list to not forget).')"
+    ```
+    
+    You'll see the terminal waiting for input.
+  </Step>
+  
+  <Step title="Provide Task via Terminal">
+    Type your task description in the terminal and press:
+    
+    - **Linux/Mac**: `Ctrl+D` to signal end of input
+    - **Windows**: `Ctrl+Z` then `Enter`
+  </Step>
+  
+  <Step title="Continuous Operation">
+    The agent will:
+    
+    1. Execute your task
+    2. Request the next task via terminal
+    3. Repeat indefinitely until you type: `stop`, `end`, `terminate`, or `quit`
+  </Step>
+</Steps>
+
+### Terminal Commands
+
+The protocol uses these Python commands for cross-platform compatibility:
+
+<CodeGroup>
+```bash Task Request
+python3 -c "import readline; task = input(''); print('Once done, ensure to follow ./tasksync.md file and ask for input again (add this to the todo list to not forget).')"
+```
+
+```bash Question Request
+python3 -c "import readline; question = input('How can i help you? ')"
+```
+</CodeGroup>
+
+### Protocol Behavior
+
+The terminal protocol enforces these **primary directives**:
+
+- **Never terminate automatically** - Agent continues until explicit stop command
+- **No concluding phrases** - Agent never says "let me know if you need anything else"
+- **Immediate task requests** - Agent requests next task immediately after completion
+- **Continuous operation** - Always requesting tasks when not executing them
+
+<Warning>
+The terminal protocol is designed for autonomous operation. The agent will continuously request tasks via terminal. Make sure you understand this behavior before enabling it.
+</Warning>
+
+---
+
+## Option 3: MCP Server
+
+<Note>
+The **MCP Server** option allows external IDEs (Kiro, Cursor, Claude Desktop, Antigravity) to use TaskSync's `get_feedback` tool via the Model Context Protocol.
+</Note>
+
+### Installation: Embedded MCP Server (VS Code)
+
+The VS Code extension includes an embedded MCP server that can be used by external IDEs.
+
+<Steps>
+  <Step title="Install TaskSync Extension">
+    First, install the TaskSync VS Code extension (see [Option 1](#option-1-vs-code-extension)).
+  </Step>
+  
+  <Step title="Enable MCP Server">
+    Configure MCP server settings in VS Code:
+    
+    ```json settings.json
+    {
+      // Always start MCP server on activation
+      "tasksync.mcpEnabled": false,
+      
+      // Auto-start if external client configs detected
+      "tasksync.mcpAutoStartIfClients": true,
+      
+      // MCP server port (default: 3579)
+      "tasksync.mcpPort": 3579,
+      
+      // Auto-register with Kiro, Cursor, Antigravity
+      "tasksync.autoRegisterMcp": true
+    }
+    ```
+  </Step>
+  
+  <Step title="MCP Server Auto-Starts">
+    The MCP server automatically starts if:
+    
+    1. `tasksync.mcpEnabled` is `true`, OR
+    2. `tasksync.mcpAutoStartIfClients` is `true` AND external client configurations are detected
+    
+    The extension checks for these config files:
+    
+    - **Kiro**: `~/.kiro/settings/mcp.json`
+    - **Cursor**: `~/.cursor/mcp.json`
+    - **Antigravity**: `~/.gemini/antigravity/mcp_config.json`
+  </Step>
+  
+  <Step title="Configure External IDE">
+    The MCP server uses **SSE transport** on port `3579` by default.
+    
+    For **auto-configured clients** (Kiro, Cursor, Antigravity), no manual setup needed.
+    
+    For **other MCP clients**, add this configuration:
+    
+    ```json mcp.json
+    {
+      "mcpServers": {
+        "tasksync-chat": {
+          "transport": "sse",
+          "url": "http://localhost:3579/sse"
+        }
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+### Installation: Standalone MCP Server
+
+For use without the VS Code extension:
+
+<Steps>
+  <Step title="Install from GitHub">
+    The standalone MCP server is available at:
+    
+    [github.com/4regab/tasksync-mcp](https://github.com/4regab/tasksync-mcp)
+    
+    Follow the installation instructions in that repository.
+  </Step>
+  
+  <Step title="How It Works">
+    The standalone MCP server:
+    
+    1. Provides a `get_feedback` tool to AI agents
+    2. Monitors a `feedback.md` file in your workspace
+    3. When the agent calls `get_feedback`, the file opens for editing
+    4. When you save the file, your feedback is returned to the agent
+  </Step>
+</Steps>
+
+### MCP Commands (Extension)
+
+When using the embedded MCP server in VS Code:
+
+<CodeGroup>
+```bash Start Server
+# Via Command Palette
+TaskSync: Start MCP Server
+```
+
+```bash Restart Server
+# Via Command Palette
+TaskSync: Restart MCP Server
+```
+
+```bash Show Config
+# Via Command Palette
+TaskSync: Show MCP Configuration
+
+# Select: Kiro, Cursor, or Antigravity
+# Then: Copy to Clipboard or Open File
+```
+</CodeGroup>
+
+### MCP Server Code Reference
+
+The embedded MCP server implementation:
+
+```typescript tasksync-chat/src/mcp/mcpServer.ts
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+
+// MCP server runs on port 3579 by default
+// Provides get_feedback tool that delegates to ask_user
+```
+
+Auto-start logic:
+
+```typescript tasksync-chat/src/extension.ts
+const mcpEnabled = config.get<boolean>('mcpEnabled', false);
+const autoStartIfClients = config.get<boolean>('mcpAutoStartIfClients', true);
+
+if (mcpEnabled) {
+  mcpServer.start();
+} else if (autoStartIfClients) {
+  hasExternalMcpClientsAsync().then(hasClients => {
+    if (hasClients && mcpServer) {
+      mcpServer.start();
+    }
+  });
+}
+```
+
+---
+
+## Comparing Installation Options
+
+| Feature | VS Code Extension | Terminal Protocol | MCP Server |
+|---------|------------------|-------------------|------------|
+| **Queue Mode** | ✅ | ❌ | ❌ |
+| **Autopilot** | ✅ | ❌ | ❌ |
+| **File References** | ✅ | ❌ | ❌ |
+| **Image Paste** | ✅ | ❌ | ❌ |
+| **History Tracking** | ✅ | ❌ | ❌ |
+| **Works with any IDE** | ❌ (VS Code only) | ✅ | ✅ |
+| **Autonomous Mode** | ⚠️ (via Autopilot) | ✅ (built-in) | ❌ |
+| **Setup Complexity** | Low | Medium | Medium |
+
+---
+
+## GitHub Security Warning
+
+<Warning>
+**GitHub Acceptable Use Notice**
+
+GitHub prohibits excessive automated bulk activity or any activity that places undue burden on their infrastructure.
+
+Please review:
+- [GitHub Acceptable Use Policies](https://docs.github.com/site-policy/acceptable-use-policies/github-acceptable-use-policies#4-spam-and-inauthentic-activity-on-github)
+- [GitHub Copilot Terms](https://docs.github.com/site-policy/github-terms/github-terms-for-additional-products-and-features#github-copilot)
+
+**Use TaskSync responsibly and at your own risk. You are responsible for ensuring your usage complies with GitHub's terms of service.**
+</Warning>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Extension not activating">
+    Check that:
+    
+    1. VS Code version is 1.90.0 or higher
+    2. Extension is enabled in Extensions view
+    3. No conflicting extensions are installed
+    
+    Try:
+    
+    ```bash
+    # Reload VS Code window
+    Ctrl+Shift+P → "Developer: Reload Window"
+    ```
+  </Accordion>
+  
+  <Accordion title="MCP server won't start">
+    Common issues:
+    
+    1. **Port conflict**: Port 3579 is already in use
+       - Change port in settings: `"tasksync.mcpPort": 3580`
+    
+    2. **External client not detected**: Auto-start won't trigger
+       - Manually enable: `"tasksync.mcpEnabled": true`
+    
+    3. **Check MCP server status**:
+       ```bash
+       # Via Command Palette
+       TaskSync: Show MCP Configuration
+       ```
+  </Accordion>
+  
+  <Accordion title="Terminal protocol agent stops asking for tasks">
+    The agent may have violated a primary directive. Common causes:
+    
+    1. Agent used concluding phrases ("let me know if...")
+    2. Agent didn't execute the terminal command
+    3. Agent hit a model-specific termination condition
+    
+    **Solution**: Remind the agent of the protocol:
+    
+    ```
+    You must continue requesting tasks via the terminal command. Never end the session.
+    ```
+  </Accordion>
+  
+  <Accordion title="Cannot build from source">
+    Make sure you have:
+    
+    ```bash
+    # Install dependencies
+    npm install
+    
+    # Install VSCE (VS Code Extension packager)
+    npm install -g @vscode/vsce
+    
+    # Package extension
+    npx vsce package
+    ```
+    
+    Build requirements:
+    - Node.js 20.x or higher
+    - TypeScript 5.3.3 or higher
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running with your first ask_user interaction
+  </Card>
+  
+  <Card title="Core Features" icon="star" href="/features/queue-mode">
+    Understand Queue Mode, Autopilot, and session management
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize timeouts, delays, and workspace settings
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/ask-user">
+    Explore the ask_user tool and MCP server API
+  </Card>
+</CardGroup>

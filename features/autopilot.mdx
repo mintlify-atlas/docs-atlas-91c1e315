@@ -1,0 +1,364 @@
+---
+title: 'Autopilot Mode'
+description: 'Enable autonomous operation for AI agents with automatic responses to ask_user tool calls'
+icon: 'plane-departure'
+---
+
+<Info>
+**Autopilot Mode** automatically responds to `ask_user` tool calls without waiting for manual input. Configure custom responses to guide the agent's autonomous behavior.
+</Info>
+
+## Overview
+
+<Card title="Autonomous Operation" icon="robot">
+When Autopilot is enabled, TaskSync automatically responds to `ask_user` tool calls using your configured response text. This allows AI agents to continue working without human intervention.
+</Card>
+
+## How It Works
+
+1. **Enable Autopilot**: Toggle the Autopilot switch in the TaskSync sidebar
+2. **Configure Response**: Set custom response text or use cycling prompts
+3. **Automatic Responses**: When the AI triggers `ask_user`, TaskSync sends the configured response
+4. **Queue Priority**: Queued prompts always override Autopilot responses
+
+<Warning>
+Autopilot continues until manually disabled or the auto-response limit is reached (default: 5 consecutive responses).
+</Warning>
+
+## Configuration
+
+### Basic Settings
+
+From `package.json:105-125`:
+
+```json
+"tasksync.autopilot": {
+  "type": "boolean",
+  "default": false,
+  "description": "Enable Autopilot to automatically respond to ask_user prompts without waiting for your input, using a customizable prompt you can configure in Settings. Queued prompts always take priority over Autopilot responses."
+},
+"tasksync.autopilotText": {
+  "type": "string",
+  "default": "You are temporarily in autonomous mode and must now make your own decision. If another question arises, be sure to ask it, as autonomous mode is temporary.",
+  "description": "Text returned when Autopilot is enabled. The agent receives this as an automatic response."
+},
+"tasksync.autopilotPrompts": {
+  "type": "array",
+  "items": { "type": "string" },
+  "default": [],
+  "description": "Array of prompts that cycle in order during Autopilot (1→2→3→1...). Each prompt is sent sequentially with human-like delay. When empty, falls back to autopilotText."
+}
+```
+
+### Cycling Prompts
+
+<Tip>
+**New in v2.0.24**: Autopilot supports cycling through multiple prompts for more dynamic autonomous behavior.
+</Tip>
+
+Configure multiple prompts that cycle in order:
+
+```json
+{
+  "tasksync.autopilotPrompts": [
+    "Proceed with the implementation",
+    "Continue with the next step",
+    "Make your best judgment and continue"
+  ]
+}
+```
+
+From `webviewProvider.ts:899-906`:
+
+```typescript
+// Get the next prompt from the cycling array (or fallback to default)
+let effectiveText: string;
+if (this._autopilotPrompts.length > 0) {
+    effectiveText = this._autopilotPrompts[this._autopilotIndex];
+    this._autopilotIndex = (this._autopilotIndex + 1) % this._autopilotPrompts.length;
+} else {
+    effectiveText = this._normalizeAutopilotText(this._autopilotText);
+}
+```
+
+## Safety Limits
+
+### Max Consecutive Auto-Responses
+
+<Warning>
+To prevent infinite loops, Autopilot enforces a maximum consecutive auto-response limit.
+</Warning>
+
+From `package.json:180-187`:
+
+```json
+"tasksync.maxConsecutiveAutoResponses": {
+  "type": "number",
+  "default": 5,
+  "minimum": 1,
+  "maximum": 50,
+  "description": "Maximum consecutive auto-responses (from timeout) before terminating session. Prevents infinite loops."
+}
+```
+
+From `webviewProvider.ts:872-928`:
+
+```typescript
+if (this._autopilotEnabled && !(this._queueEnabled && this._promptQueue.length > 0)) {
+    // Increment consecutive auto-response counter
+    this._consecutiveAutoResponses++;
+
+    // Get max consecutive limit from config
+    const config = vscode.workspace.getConfiguration('tasksync');
+    const maxConsecutive = config.get<number>('maxConsecutiveAutoResponses', 5);
+
+    // Check if limit reached BEFORE auto-responding
+    if (this._consecutiveAutoResponses > maxConsecutive) {
+        // Limit exceeded - disable autopilot and wait for timeout or user response
+        this._autopilotEnabled = false;
+        await config.update('autopilot', false, vscode.ConfigurationTarget.Workspace);
+        this._updateSettingsUI();
+        vscode.window.showWarningMessage(
+            `TaskSync: Auto-response limit (${maxConsecutive}) reached. Waiting for response or timeout.`
+        );
+        // Fall through to pending request flow with timeout timer
+    } else {
+        // Still under limit - auto-respond with autopilot text
+        // ...
+        vscode.window.showInformationMessage(
+            `TaskSync: Autopilot auto-responded. (${this._consecutiveAutoResponses}/${maxConsecutive})`
+        );
+    }
+}
+```
+
+### Consecutive Counter Reset
+
+The consecutive auto-response counter resets when:
+- A new session starts
+- User manually responds to an `ask_user` call
+- Queue mode sends a queued prompt
+
+```typescript
+// From webviewProvider.ts:355
+this._consecutiveAutoResponses = 0;
+```
+
+## Autopilot Processing Logic
+
+```typescript
+// From webviewProvider.ts:867-929
+if (this._autopilotEnabled && !(this._queueEnabled && this._promptQueue.length > 0)) {
+    // Cancel any superseded pending request
+    this._cancelSupersededPendingRequest();
+
+    this._consecutiveAutoResponses++;
+
+    const config = vscode.workspace.getConfiguration('tasksync');
+    const maxConsecutive = config.get<number>('maxConsecutiveAutoResponses', 5);
+
+    if (this._consecutiveAutoResponses > maxConsecutive) {
+        this._autopilotEnabled = false;
+        await config.update('autopilot', false, vscode.ConfigurationTarget.Workspace);
+        this._updateSettingsUI();
+        vscode.window.showWarningMessage(
+            `TaskSync: Auto-response limit (${maxConsecutive}) reached.`
+        );
+    } else {
+        const toolCallId = `tc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        this._currentToolCallId = toolCallId;
+
+        // Apply human-like delay (jitter)
+        await this._applyHumanLikeDelay('Autopilot');
+
+        // Re-check after delay: user may have disabled autopilot
+        if (!this._autopilotEnabled || this._currentToolCallId !== toolCallId) {
+            // State changed during delay — fall through to normal flow
+        } else {
+            // Get cycling prompt or fallback text
+            let effectiveText: string;
+            if (this._autopilotPrompts.length > 0) {
+                effectiveText = this._autopilotPrompts[this._autopilotIndex];
+                this._autopilotIndex = (this._autopilotIndex + 1) % this._autopilotPrompts.length;
+            } else {
+                effectiveText = this._normalizeAutopilotText(this._autopilotText);
+            }
+            
+            vscode.window.showInformationMessage(
+                `TaskSync: Autopilot auto-responded. (${this._consecutiveAutoResponses}/${maxConsecutive})`
+            );
+
+            const entry: ToolCallEntry = {
+                id: toolCallId,
+                prompt: question,
+                response: effectiveText,
+                timestamp: Date.now(),
+                isFromQueue: false,
+                status: 'completed'
+            };
+            this._currentSessionCalls.unshift(entry);
+            this._currentSessionCallsMap.set(entry.id, entry);
+            this._updateViewTitle();
+            this._updateCurrentSessionUI();
+            this._currentToolCallId = null;
+
+            return {
+                value: effectiveText,
+                queue: this._queueEnabled && this._promptQueue.length > 0,
+                attachments: []
+            };
+        }
+    }
+}
+```
+
+## Queue Priority
+
+<Info>
+**Queue prompts always take priority** over Autopilot responses. If Queue Mode is enabled and has queued prompts, they are sent first.
+</Info>
+
+From `webviewProvider.ts:958-996`:
+
+```typescript
+// Check if queue is enabled and has prompts - auto-respond
+if (this._queueEnabled && this._promptQueue.length > 0) {
+    const queuedPrompt = this._promptQueue.shift();
+    // ... queue handling logic
+}
+```
+
+## Human-like Delays
+
+<Card title="Natural Timing" icon="clock">
+Autopilot responses include optional random delays (2-6s) to simulate human reading and response time.
+</Card>
+
+From `webviewProvider.ts:428-456`:
+
+```typescript
+/**
+ * Generate a random delay (jitter) between min and max seconds.
+ * 
+ * Random delays simulate natural human pacing — the time it takes
+ * to read a message and type a response. Fixed delays create
+ * unnatural patterns; jitter produces realistic timing variation.
+ */
+private _getHumanLikeDelayMs(): number {
+    if (!this._humanLikeDelayEnabled) {
+        return 0;
+    }
+    const minMs = this._humanLikeDelayMin * 1000;
+    const maxMs = this._humanLikeDelayMax * 1000;
+    // Uniform random distribution across the range
+    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
+
+/**
+ * Wait a random duration before sending an automated response.
+ * Called before Autopilot, Queue, and Timeout auto-responses.
+ */
+private async _applyHumanLikeDelay(label?: string): Promise<void> {
+    const delayMs = this._getHumanLikeDelayMs();
+    if (delayMs > 0) {
+        const delaySec = (delayMs / 1000).toFixed(1);
+        if (label) {
+            vscode.window.setStatusBarMessage(
+                `TaskSync: ${label} responding in ${delaySec}s...`, 
+                delayMs
+            );
+        }
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+}
+```
+
+## Backward Compatibility
+
+<Tip>
+Autopilot automatically migrates from the old `autoAnswer` settings for backward compatibility.
+</Tip>
+
+From `webviewProvider.ts:595-637`:
+
+```typescript
+private _loadSettings(): void {
+    const config = vscode.workspace.getConfiguration('tasksync');
+    
+    // Backward-compatible migration: read old 'autoAnswer'/'autoAnswerText' keys
+    // if new 'autopilot'/'autopilotText' keys haven't been set by user
+    const inspectedAutopilot = config.inspect<boolean>('autopilot');
+    const hasNewAutopilotKey = inspectedAutopilot?.globalValue !== undefined
+        || inspectedAutopilot?.workspaceValue !== undefined
+        || inspectedAutopilot?.workspaceFolderValue !== undefined;
+
+    if (!hasNewAutopilotKey) {
+        const oldVal = config.inspect<boolean>('autoAnswer');
+        const hasOldKey = oldVal?.globalValue !== undefined
+            || oldVal?.workspaceValue !== undefined
+            || oldVal?.workspaceFolderValue !== undefined;
+        if (hasOldKey) {
+            this._autopilotEnabled = config.get<boolean>('autoAnswer', false);
+        } else {
+            this._autopilotEnabled = false;
+        }
+    } else {
+        this._autopilotEnabled = config.get<boolean>('autopilot', false);
+    }
+    // ... similar migration for autopilotText
+}
+```
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Long-Running Tasks">
+    Enable Autopilot for tasks that require multiple sequential decisions:
+    
+    - Large codebase refactoring
+    - Multi-file test generation
+    - Documentation updates across modules
+  </Tab>
+  
+  <Tab title="Batch Processing">
+    Use Autopilot for repetitive operations:
+    
+    - Applying consistent formatting changes
+    - Updating import statements
+    - Renaming variables across files
+  </Tab>
+  
+  <Tab title="Exploratory Analysis">
+    Let the agent explore autonomously:
+    
+    - Code review with automated suggestions
+    - Dependency analysis
+    - Security audit scanning
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Clear Guidelines" icon="compass">
+    Configure Autopilot response text with clear instructions for the agent's autonomous behavior.
+  </Card>
+  
+  <Card title="Monitor Progress" icon="chart-line">
+    Watch the tool call history to ensure the agent is making appropriate decisions.
+  </Card>
+  
+  <Card title="Set Limits" icon="shield-check">
+    Configure appropriate max consecutive auto-responses to prevent runaway execution.
+  </Card>
+  
+  <Card title="Disable When Needed" icon="hand-paper">
+    Toggle Autopilot off at any time to take manual control.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Queue Mode](/features/queue-mode) - Pre-queue prompts for sequential execution
+- [Session Management](/features/session-management) - Track Autopilot usage and health
+- [Response Timeout](/features/session-management#response-timeout) - Auto-respond after idle periods

@@ -1,0 +1,537 @@
+---
+title: 'Session Management'
+description: 'Track session health, view history, and manage long-running AI workflows'
+icon: 'clock-rotate-left'
+---
+
+<Info>
+**Session Management** tracks your AI agent's activity over time, showing elapsed time, tool call count, and session health warnings.
+</Info>
+
+## Overview
+
+<Card title="Session Tracking" icon="stopwatch">
+TaskSync tracks session duration and tool call count in the sidebar title bar. The session timer starts on the first `ask_user` tool call and continues until you start a new session.
+</Card>
+
+## Session Timer
+
+### Timer Display
+
+From `webviewProvider.ts:460-483`:
+
+```typescript
+/**
+ * Update the view title and webview with current session timer state
+ */
+private _updateViewTitle(): void {
+    if (this._view) {
+        const callCount = this._currentSessionCalls.length;
+        if (this._sessionFrozenElapsed !== null) {
+            // Session terminated - show frozen time
+            this._view.title = this._formatElapsed(this._sessionFrozenElapsed);
+            this._view.badge = callCount > 0 
+                ? { value: callCount, tooltip: TIMER_TOOLTIP } 
+                : undefined;
+        } else if (this._sessionStartTime !== null) {
+            // Active session - show live time
+            this._view.title = this._formatElapsed(
+                Date.now() - this._sessionStartTime
+            );
+            this._view.badge = callCount > 0 
+                ? { value: callCount, tooltip: TIMER_TOOLTIP } 
+                : undefined;
+        } else {
+            // No active session
+            this._view.title = undefined;
+            this._view.description = undefined;
+            this._view.badge = undefined;
+        }
+    }
+}
+```
+
+### Timer Formatting
+
+From `webviewProvider.ts:402-417`:
+
+```typescript
+/**
+ * Format elapsed milliseconds as human-readable (e.g., 5m 32s, 1h 5m 32s)
+ */
+private _formatElapsed(ms: number): string {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) {
+        return `${hours}h ${minutes}m ${seconds}s`;
+    }
+    if (minutes > 0) {
+        return `${minutes}m ${seconds}s`;
+    }
+    return `${seconds}s`;
+}
+```
+
+## Session Health Warning
+
+<Warning>
+TaskSync shows a one-time warning when a session exceeds the configured duration threshold (default: 2 hours).
+</Warning>
+
+### Configuration
+
+From `package.json:172-179`:
+
+```json
+"tasksync.sessionWarningHours": {
+  "type": "number",
+  "default": 2,
+  "minimum": 0,
+  "maximum": 8,
+  "description": "Show a one-time warning after this many hours (0..8) in the same session. Set to 0 to disable session warning."
+}
+```
+
+### Warning Logic
+
+From `webviewProvider.ts:487-514`:
+
+```typescript
+/**
+ * Start the session timer interval that updates the view description every second
+ */
+private _startSessionTimerInterval(): void {
+    if (this._sessionTimerInterval) return; // Already running
+    this._sessionTimerInterval = setInterval(() => {
+        if (this._sessionStartTime !== null && this._sessionFrozenElapsed === null) {
+            const elapsed = Date.now() - this._sessionStartTime;
+            if (this._view) {
+                this._view.title = this._formatElapsed(elapsed);
+            }
+            // Warn once when a long-running session crosses the threshold
+            const warningThresholdMs = this._sessionWarningHours * 60 * 60 * 1000;
+            if (
+                this._sessionWarningHours > 0 && 
+                !this._sessionWarningShown && 
+                elapsed >= warningThresholdMs
+            ) {
+                this._sessionWarningShown = true;
+                const callCount = this._currentSessionCalls.length;
+                const hoursLabel = this._sessionWarningHours === 1 
+                    ? 'hour' 
+                    : 'hours';
+                vscode.window.showWarningMessage(
+                    `Your session has been running for over ${this._sessionWarningHours} ${hoursLabel} (${callCount} tool calls). Consider starting a new session to maintain quality.`,
+                    'New Session',
+                    'Dismiss'
+                ).then(action => {
+                    if (action === 'New Session') {
+                        this.startNewSession();
+                    }
+                });
+            }
+        }
+    }, 1000);
+}
+```
+
+### Warning Tooltip
+
+From `webviewProvider.ts:458`:
+
+```typescript
+private static readonly _TIMER_TOOLTIP = 
+    'It is advisable to start a new session and use another premium request prompt after 2-4h or 50 tool calls';
+```
+
+## Tool Call History
+
+### Current Session History
+
+<Card title="In-Memory Tracking" icon="list">
+Tool calls in the current session are stored in memory and displayed in the sidebar with expandable cards.
+</Card>
+
+From `webviewProvider.ts:43-51`:
+
+```typescript
+// Tool call history entry
+export interface ToolCallEntry {
+    id: string;
+    prompt: string;
+    response: string;
+    timestamp: number;
+    isFromQueue: boolean;
+    status: 'pending' | 'completed' | 'cancelled';
+    attachments?: AttachmentInfo[];
+}
+```
+
+From `webviewProvider.ts:145-150`:
+
+```typescript
+// Current session tool calls (memory only - not persisted during session)
+private _currentSessionCalls: ToolCallEntry[] = [];
+
+// Persisted history from past sessions (loaded from disk)
+private _persistedHistory: ToolCallEntry[] = [];
+private _currentToolCallId: string | null = null;
+```
+
+### Performance Optimization
+
+<Tip>
+TaskSync uses a Map for O(1) tool call lookups by ID, synchronized with the array for efficient updates.
+</Tip>
+
+From `webviewProvider.ts:179-180`:
+
+```typescript
+// Map for O(1) lookup of tool calls by ID (synced with _currentSessionCalls array)
+private _currentSessionCallsMap: Map<string, ToolCallEntry> = new Map();
+```
+
+### Persisted History
+
+<Card title="Disk Persistence" icon="floppy-disk">
+Completed tool calls are saved to disk per-workspace and survive VS Code restarts.
+</Card>
+
+From `webviewProvider.ts:162-164`:
+
+```typescript
+// Debounce timer for history persistence (async background saves)
+private _historySaveTimer: ReturnType<typeof setTimeout> | null = null;
+private readonly _HISTORY_SAVE_DEBOUNCE_MS = 2000; // 2 seconds debounce
+private _historyDirty: boolean = false; // Track if history needs saving
+```
+
+### History Limits
+
+From `webviewProvider.ts:167`:
+
+```typescript
+private readonly _MAX_HISTORY_ENTRIES = 100;
+```
+
+### Save on Deactivate
+
+From `webviewProvider.ts:291-312`:
+
+```typescript
+/**
+ * Save current tool call history to persisted history (called on deactivate)
+ * Uses synchronous save because deactivate cannot await async operations
+ */
+public saveCurrentSessionToHistory(): void {
+    // Cancel any pending debounced saves
+    if (this._historySaveTimer) {
+        clearTimeout(this._historySaveTimer);
+        this._historySaveTimer = null;
+    }
+
+    // Only save completed calls from current session
+    const completedCalls = this._currentSessionCalls.filter(
+        tc => tc.status === 'completed'
+    );
+    if (completedCalls.length > 0) {
+        // Prepend current session calls to persisted history, enforce max limit
+        this._persistedHistory = [
+            ...completedCalls, 
+            ...this._persistedHistory
+        ].slice(0, this._MAX_HISTORY_ENTRIES);
+        this._historyDirty = true;
+    }
+
+    // Force sync save on deactivation
+    this._savePersistedHistoryToDiskSync();
+}
+```
+
+## Starting a New Session
+
+<Info>
+**New Session** replaces the old "Clear Session" command. It properly cancels pending requests, resets timers, and saves the current session to history.
+</Info>
+
+### New Session Command
+
+From `webviewProvider.ts:336-381`:
+
+```typescript
+/**
+ * Start a new session: save current session to history, then clear
+ * Called from view title bar button or webview "Start new session" button
+ */
+public startNewSession(): void {
+    // Cancel any in-flight pending requests
+    if (this._responseTimeoutTimer) {
+        clearTimeout(this._responseTimeoutTimer);
+        this._responseTimeoutTimer = null;
+    }
+    if (this._currentToolCallId) {
+        const resolve = this._pendingRequests.get(this._currentToolCallId);
+        if (resolve) {
+            resolve({ value: '', queue: false, attachments: [] });
+        }
+        this._pendingRequests.delete(this._currentToolCallId);
+        this._currentToolCallId = null;
+    }
+    this._consecutiveAutoResponses = 0;
+    this._autopilotIndex = 0; // Reset autopilot prompts cycle
+
+    // Save current completed entries to persisted history
+    this.saveCurrentSessionToHistory();
+
+    // Clean up temp images from current session
+    this._cleanupTempImagesFromEntries(this._currentSessionCalls);
+
+    // Clear all entries
+    this._currentSessionCalls = [];
+    this._currentSessionCallsMap.clear();
+
+    // Reset session timer and termination flag
+    this._sessionStartTime = null;
+    this._sessionFrozenElapsed = null;
+    this._stopSessionTimerInterval();
+    this._sessionTerminated = false;
+    this._sessionWarningShown = false;
+    this._updateViewTitle();
+
+    this._updateCurrentSessionUI();
+    this._updatePersistedHistoryUI();
+
+    // Show welcome section again
+    this._view?.webview.postMessage({ type: 'clear' } as ToWebviewMessage);
+}
+```
+
+## Response Timeout
+
+<Card title="Auto-Response on Idle" icon="hourglass">
+Automatically respond to pending `ask_user` calls if the user doesn't respond within a configurable timeout (5-240 minutes).
+</Card>
+
+### Configuration
+
+From `package.json:126-171`:
+
+```json
+"tasksync.responseTimeout": {
+  "type": "string",
+  "default": "60",
+  "enum": [
+    "0", "5", "10", "20", "30", "40", "50", "60",
+    "70", "80", "90", "100", "110", "120",
+    "150", "180", "210", "240"
+  ],
+  "enumDescriptions": [
+    "Disabled (no auto-response)",
+    "5 minutes",
+    "10 minutes",
+    // ... up to "240 minutes (4 hours)"
+  ],
+  "description": "Auto-respond to pending tool calls if user doesn't respond within this time. When Autopilot is enabled, the Autopilot text is sent. When disabled, a session termination message is sent."
+}
+```
+
+### Timeout Logic
+
+From `webviewProvider.ts:1056-1077`:
+
+```typescript
+/**
+ * Start response timeout timer for a pending tool call.
+ * When timer fires, auto-responds with autopilot text.
+ */
+private _startResponseTimeoutTimer(toolCallId: string): void {
+    // Clear any existing timer
+    if (this._responseTimeoutTimer) {
+        clearTimeout(this._responseTimeoutTimer);
+        this._responseTimeoutTimer = null;
+    }
+
+    // Get timeout from config (in minutes)
+    const timeoutMinutes = this._readResponseTimeoutMinutes();
+
+    // If timeout is 0 or disabled, don't start a timer
+    if (timeoutMinutes <= 0) {
+        return;
+    }
+
+    const timeoutMs = timeoutMinutes * 60 * 1000;
+
+    this._responseTimeoutTimer = setTimeout(() => {
+        this._handleResponseTimeout(toolCallId);
+    }, timeoutMs);
+}
+```
+
+### Timeout Behavior
+
+From `webviewProvider.ts:1079-1148`:
+
+```typescript
+/**
+ * Handle response timeout - auto-respond after user idle.
+ * When autopilot is enabled, uses the autopilot text.
+ * When autopilot is disabled, uses a session termination message.
+ */
+private async _handleResponseTimeout(toolCallId: string): Promise<void> {
+    this._responseTimeoutTimer = null;
+
+    // Check if this tool call is still pending
+    if (this._currentToolCallId !== toolCallId || !this._pendingRequests.has(toolCallId)) {
+        return; // Tool call was already handled
+    }
+
+    // Apply human-like delay
+    await this._applyHumanLikeDelay('Timeout');
+
+    // Re-check after delay
+    if (this._currentToolCallId !== toolCallId || !this._pendingRequests.has(toolCallId)) {
+        return;
+    }
+
+    const config = vscode.workspace.getConfiguration('tasksync');
+    const timeoutMinutes = this._readResponseTimeoutMinutes(config);
+    const maxConsecutive = config.get<number>('maxConsecutiveAutoResponses', 5);
+
+    // Increment and enforce consecutive auto-response limit
+    this._consecutiveAutoResponses++;
+    let responseText: string;
+    let isTermination = false;
+
+    if (this._consecutiveAutoResponses > maxConsecutive) {
+        // Limit exceeded - terminate session
+        responseText = this._SESSION_TERMINATION_TEXT;
+        isTermination = true;
+        vscode.window.showWarningMessage(
+            `TaskSync: Auto-response limit (${maxConsecutive}) reached. Session terminated after ${timeoutMinutes} min idle.`
+        );
+    } else if (this._autopilotEnabled) {
+        responseText = this._normalizeAutopilotText(this._autopilotText);
+        vscode.window.showInformationMessage(
+            `TaskSync: Auto-responded after ${timeoutMinutes} min idle. (${this._consecutiveAutoResponses}/${maxConsecutive})`
+        );
+    } else {
+        responseText = this._SESSION_TERMINATION_TEXT;
+        isTermination = true;
+        vscode.window.showInformationMessage(
+            `TaskSync: Session terminated after ${timeoutMinutes} min idle.`
+        );
+    }
+
+    // Resolve the pending request
+    const resolve = this._pendingRequests.get(toolCallId);
+    if (resolve) {
+        // Update pending entry to completed
+        const pendingEntry = this._currentSessionCallsMap.get(toolCallId);
+        if (pendingEntry && pendingEntry.status === 'pending') {
+            pendingEntry.response = responseText;
+            pendingEntry.status = 'completed';
+            this._updateCurrentSessionUI();
+        }
+
+        resolve({
+            value: responseText,
+            queue: this._queueEnabled && this._promptQueue.length > 0,
+            attachments: []
+        });
+
+        this._pendingRequests.delete(toolCallId);
+        this._currentToolCallId = null;
+
+        // Send completion message to webview
+        if (pendingEntry) {
+            this._view?.webview.postMessage({
+                type: 'toolCallCompleted',
+                entry: pendingEntry,
+                sessionTerminated: isTermination
+            } as ToWebviewMessage);
+        }
+
+        // If session terminated, freeze the timer
+        if (isTermination) {
+            this._sessionTerminated = true;
+            this._sessionFrozenElapsed = this._sessionStartTime !== null
+                ? Date.now() - this._sessionStartTime
+                : null;
+            this._stopSessionTimerInterval();
+            this._updateViewTitle();
+        }
+    }
+}
+```
+
+## Session Termination
+
+<Warning>
+Sessions terminate when:
+- Consecutive auto-response limit is reached
+- Response timeout triggers with Autopilot disabled
+- User explicitly starts a new session
+</Warning>
+
+From `webviewProvider.ts:191-244`:
+
+```typescript
+private readonly _SESSION_TERMINATION_TEXT = 
+    'Session terminated. Do not use askUser tool again.';
+
+// Flag indicating the session was terminated
+private _sessionTerminated: boolean = false;
+
+// Flag to ensure the session warning is shown once per session
+private _sessionWarningShown: boolean = false;
+```
+
+### Auto-Start New Session
+
+From `webviewProvider.ts:853-865`:
+
+```typescript
+public async waitForUserResponse(question: string): Promise<UserResponseResult> {
+    // Auto-start new session if previous session was terminated
+    if (this._sessionTerminated) {
+        this.startNewSession();
+    }
+
+    // Start session timer on first tool call
+    if (this._sessionStartTime === null) {
+        this._sessionStartTime = Date.now();
+        this._sessionFrozenElapsed = null;
+        this._startSessionTimerInterval();
+        this._updateViewTitle();
+    }
+    // ...
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Regular Resets" icon="arrows-rotate">
+    Start a new session every 2-4 hours or 50 tool calls to maintain quality.
+  </Card>
+  
+  <Card title="Monitor Health" icon="heart-pulse">
+    Watch the session timer and tool call count in the sidebar title bar.
+  </Card>
+  
+  <Card title="Review History" icon="clock-rotate-left">
+    Open the History modal to review past sessions and tool call patterns.
+  </Card>
+  
+  <Card title="Configure Warnings" icon="bell">
+    Adjust `sessionWarningHours` to match your workflow (0 to disable).
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Autopilot Mode](/features/autopilot) - Consecutive auto-response limits
+- [Queue Mode](/features/queue-mode) - Track queue usage in history
+- [Response Timeout](#response-timeout) - Auto-respond after idle periods

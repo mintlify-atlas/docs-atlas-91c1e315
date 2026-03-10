@@ -1,0 +1,375 @@
+---
+title: Workflow Best Practices
+description: Best practices and recommended workflows for using TaskSync effectively
+---
+
+TaskSync provides multiple workflow modes to match your development style. This guide covers best practices for getting the most out of TaskSync.
+
+## Choosing Your Workflow Mode
+
+TaskSync offers two primary modes of operation:
+
+<Tabs>
+  <Tab title="Queue Mode">
+    **Best for:** Long-running tasks, batch processing, uninterrupted focus time
+
+    Queue Mode lets you batch multiple prompts and responses, allowing the AI agent to work through them sequentially without interrupting your workflow.
+
+    ```
+    1. Enable Queue Mode in TaskSync sidebar
+    2. Queue multiple tasks/feedback items
+    3. Agent processes all queued items in order
+    4. Switch to Normal Mode when ready
+    ```
+
+    <Tip>
+      Queue Mode is ideal when you want to provide multiple pieces of feedback at once without waiting for the agent to process each one individually.
+    </Tip>
+  </Tab>
+  <Tab title="Normal Mode">
+    **Best for:** Interactive development, immediate feedback, exploratory tasks
+
+    Normal Mode provides direct interaction with the AI agent through the `ask_user` tool, allowing real-time conversation and immediate responses.
+
+    ```
+    1. Agent triggers ask_user tool
+    2. You respond immediately
+    3. Agent continues based on your input
+    4. Repeat as needed
+    ```
+
+    <Tip>
+      Normal Mode works best when you need tight collaboration with the agent and want to guide its work step-by-step.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Autopilot Mode Strategies
+
+Autopilot enables autonomous agent operation by automatically responding to `ask_user` prompts.
+
+### When to Use Autopilot
+
+<Accordion title="Long-running autonomous tasks">
+  Enable Autopilot when you want the agent to work independently on well-defined tasks without constant supervision.
+
+  **Example configuration:**
+  ```json
+  {
+    "tasksync.autopilot": true,
+    "tasksync.autopilotText": "Continue with your best judgment and ask if you need clarification.",
+    "tasksync.responseTimeout": "30"
+  }
+  ```
+</Accordion>
+
+<Accordion title="Cycling prompts for variety">
+  Use cycling Autopilot prompts to provide varied responses that keep the agent engaged and prevent repetitive behavior.
+
+  **Example configuration:**
+  ```json
+  {
+    "tasksync.autopilot": true,
+    "tasksync.autopilotPrompts": [
+      "Continue with the next step",
+      "Proceed with implementation",
+      "Keep going, you're doing great",
+      "Move forward with the plan"
+    ]
+  }
+  ```
+
+  <Note>
+    Prompts cycle in order (1→2→3→4→1...) with each `ask_user` call. The index resets on new session.
+  </Note>
+</Accordion>
+
+<Accordion title="Combining with Queue Mode">
+  Queue Mode always takes priority over Autopilot. Queued prompts are sent first, then Autopilot kicks in for subsequent `ask_user` calls.
+
+  **Workflow:**
+  1. Enable both Queue Mode and Autopilot
+  2. Queue your specific feedback/tasks
+  3. Agent processes queued items first
+  4. Autopilot handles remaining interactions
+</Accordion>
+
+### When NOT to Use Autopilot
+
+<Warning>
+  Avoid Autopilot for:
+  - Tasks requiring critical decision-making
+  - Security-sensitive operations
+  - Complex refactoring without clear requirements
+  - Initial project setup or architecture decisions
+</Warning>
+
+## Session Management
+
+Proper session management is critical for maintaining high-quality agent responses.
+
+### Session Duration Guidelines
+
+<Accordion title="2-hour warning threshold">
+  TaskSync shows a one-time warning after 2 hours of continuous session activity. This is your signal to consider whether the agent's context is still optimal.
+
+  **Configure the warning:**
+  ```json
+  "tasksync.sessionWarningHours": 2
+  ```
+
+  Set to `0` to disable warnings.
+</Accordion>
+
+<Accordion title="4-hour maximum recommendation">
+  Sessions beyond 4 hours often produce lower-quality results due to context degradation.
+
+  <Warning>
+    **Best practice:** Start a new session after 4 hours or 50 tool calls to maintain optimal agent performance.
+  </Warning>
+</Accordion>
+
+<Accordion title="When to start a new session">
+  Consider starting a new session when:
+  - Switching to a different feature or area of the codebase
+  - Agent responses become repetitive or off-target
+  - You've reached the session warning threshold
+  - Starting a new day or work session
+  - Context has drifted from the original task
+
+  **Start a new session:**
+  1. Click the "New Session" button (trash icon) in the title bar
+  2. Confirm the action
+  3. Session timer resets and context clears
+</Accordion>
+
+## Context Management
+
+Effective context management helps the agent understand your codebase better.
+
+### File and Folder References
+
+<Accordion title="Using # autocomplete">
+  TaskSync provides `#` autocomplete for files, folders, and context items.
+
+  **Usage:**
+  ```
+  Type: #
+  See: Autocomplete dropdown with files and folders
+  Select: File/folder to attach as context
+  ```
+
+  <Tip>
+    Reference multiple files in a single prompt to give the agent comprehensive context.
+  </Tip>
+</Accordion>
+
+<Accordion title="Special context references">
+  TaskSync provides special context references:
+
+  - `#terminal` - Attach current terminal output
+  - `#problems` - Attach workspace diagnostics/errors
+
+  **Example:**
+  ```
+  Fix the errors shown in #problems
+  ```
+</Accordion>
+
+<Accordion title="Image support">
+  Paste or drag-drop images directly into the TaskSync input field. The agent can view and analyze images.
+
+  **Supported formats:** PNG, JPG, GIF
+
+  <Note>
+    Images are temporarily stored and cleaned up when you start a new session or dispose of the webview.
+  </Note>
+</Accordion>
+
+## Reusable Prompts
+
+Create saved prompts for common tasks to improve efficiency.
+
+<Accordion title="Creating reusable prompts">
+  Define prompts in settings:
+
+  ```json
+  "tasksync.reusablePrompts": [
+    {
+      "name": "review",
+      "prompt": "Review this code for bugs, performance issues, and style improvements. Provide specific suggestions."
+    },
+    {
+      "name": "test",
+      "prompt": "Write comprehensive unit tests with edge cases and error handling."
+    },
+    {
+      "name": "docs",
+      "prompt": "Add JSDoc comments explaining parameters, return values, and usage examples."
+    }
+  ]
+  ```
+</Accordion>
+
+<Accordion title="Using slash commands">
+  Access saved prompts by typing `/` in the input field:
+
+  ```
+  Type: /review
+  Result: Full review prompt is inserted
+  ```
+
+  <Tip>
+    Combine slash commands with file references: `/review #src/utils.ts`
+  </Tip>
+</Accordion>
+
+## MCP Server Integration
+
+The built-in MCP server enables integration with external IDEs.
+
+<Accordion title="Using with external IDEs">
+  TaskSync auto-registers with supported clients (Kiro, Cursor, Antigravity).
+
+  **Configuration for external IDEs:**
+  ```json
+  {
+    "tasksync.mcpEnabled": true,
+    "tasksync.mcpPort": 3579,
+    "tasksync.autoRegisterMcp": true
+  }
+  ```
+
+  <Note>
+    The MCP server uses SSE transport and runs on port 3579 by default. Set to `0` for dynamic port assignment.
+  </Note>
+</Accordion>
+
+<Accordion title="Auto-start behavior">
+  Control when the MCP server starts:
+
+  - `mcpEnabled: true` - Always start on activation
+  - `mcpAutoStartIfClients: true` - Start only if external client configs detected
+
+  **Recommended for VS Code-only users:**
+  ```json
+  {
+    "tasksync.mcpEnabled": false,
+    "tasksync.mcpAutoStartIfClients": true
+  }
+  ```
+</Accordion>
+
+## Response Timeout Strategy
+
+Configure automatic responses for unattended operation.
+
+<Accordion title="Setting appropriate timeouts">
+  Choose timeout values based on your workflow:
+
+  - **5-10 minutes:** Quick tasks, high interactivity
+  - **30-60 minutes:** Standard development sessions
+  - **90-120 minutes:** Long-running tasks with occasional check-ins
+  - **Disabled (0):** Always wait for manual input
+
+  ```json
+  "tasksync.responseTimeout": "60"
+  ```
+</Accordion>
+
+<Accordion title="Preventing infinite loops">
+  Set a reasonable limit for consecutive auto-responses:
+
+  ```json
+  "tasksync.maxConsecutiveAutoResponses": 5
+  ```
+
+  <Warning>
+    This prevents infinite loops when Autopilot is enabled. After reaching the limit, the session terminates automatically.
+  </Warning>
+</Accordion>
+
+<Accordion title="Human-like delays">
+  Enable natural timing for more realistic workflows:
+
+  ```json
+  {
+    "tasksync.humanLikeDelay": true,
+    "tasksync.humanLikeDelayMin": 2,
+    "tasksync.humanLikeDelayMax": 6
+  }
+  ```
+
+  <Tip>
+    Human-like delays simulate natural reading and typing time, making automated responses feel more organic.
+  </Tip>
+</Accordion>
+
+## VS Code Copilot Best Practices
+
+Optimize TaskSync for use with VS Code Copilot agent mode.
+
+<Accordion title="Recommended VS Code settings">
+  ```json
+  {
+    "chat.agent.maxRequests": 999,
+    "github.copilot.chat.autoApproveAll": true
+  }
+  ```
+
+  <Warning>
+    Enable "Auto Approve" in VS Code settings for uninterrupted agent operation.
+  </Warning>
+</Accordion>
+
+<Accordion title="GPT model recommendations">
+  For GPT models, use:
+  - TaskSync VS Code Extension (recommended)
+  - TaskSync MCP Server (alternative)
+
+  <Note>
+    TaskSync is optimized for VS Code Copilot's agent mode with the `ask_user` tool.
+  </Note>
+</Accordion>
+
+## Development Workflow Example
+
+Here's a complete workflow example combining multiple TaskSync features:
+
+```
+1. Start new session
+   - Click "New Session" button
+
+2. Provide initial context
+   - "Implement user authentication #src/auth #src/types"
+
+3. Enable Queue Mode
+   - Toggle Queue Mode in sidebar
+
+4. Queue multiple feedback items
+   - "Add input validation"
+   - "Include error handling"
+   - "Write tests"
+
+5. Let agent process queue
+   - Agent works through all queued items
+
+6. Review results
+   - Check implementation
+
+7. Use reusable prompt
+   - "/review #src/auth/login.ts"
+
+8. Start new session after 2-4 hours
+   - Maintain optimal context quality
+```
+
+## Performance Tips
+
+<Tip>
+  - Use workspace-scoped storage to keep projects isolated
+  - Clear old sessions regularly to free up storage
+  - Reference specific files instead of entire directories
+  - Use Queue Mode for batch operations
+  - Start new sessions when switching major tasks
+</Tip>
