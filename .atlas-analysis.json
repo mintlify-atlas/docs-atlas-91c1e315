@@ -1,0 +1,93 @@
+{
+  "projectType": "saas",
+  "projectName": "TaskSync",
+  "projectDescription": "Queue your prompts and manage AI-assisted development with human-in-the-loop workflows for VS Code Copilot.",
+  "theme": "palm",
+  "primaryColor": "#663ebc",
+  "lightColor": "#b49cdc",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/queue-mode",
+              "features/autopilot",
+              "features/ask-user-tool",
+              "features/file-references",
+              "features/session-management"
+            ]
+          },
+          {
+            "group": "Integration Options",
+            "pages": [
+              "integration/vscode-extension",
+              "integration/terminal-protocol",
+              "integration/mcp-server"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/configuration",
+              "guides/workflow-best-practices",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Tools",
+            "pages": [
+              "api/ask-user",
+              "api/context-providers"
+            ]
+          },
+          {
+            "group": "MCP Server",
+            "pages": [
+              "api/mcp-setup",
+              "api/mcp-endpoints"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Smart Queue Mode for batching AI agent responses",
+    "Autopilot mode for autonomous agent operation",
+    "Ask User tool for human-in-the-loop feedback",
+    "VS Code sidebar extension with dedicated UI",
+    "Built-in MCP server with SSE transport",
+    "Terminal-based agent protocols",
+    "File and folder references with # autocomplete",
+    "Session tracking and tool call history",
+    "Image paste and drag-drop support",
+    "Auto-registration with Kiro, Cursor, and Antigravity"
+  ],
+  "publicApiSurface": [
+    "ask_user tool - Request user feedback or approval",
+    "get_feedback tool (MCP) - Get feedback from feedback.md file",
+    "context:// URIs - Terminal and problems context providers",
+    "MCP server endpoints - /sse for SSE transport, /message for messaging",
+    "VS Code commands - tasksync.startMcp, tasksync.sendMessage, tasksync.restartMcp",
+    "Language model tool registration - vscode.lm.registerTool('ask_user')",
+    "Queue management API - Add, remove, edit, reorder queued prompts",
+    "Settings configuration - Autopilot, notification sounds, timeouts"
+  ]
+}
